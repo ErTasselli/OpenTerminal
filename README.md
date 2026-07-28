@@ -50,7 +50,37 @@ No signup. No credit card. No rate‑limited demo tier. Clone it, `npm install`,
 
 <br/>
 
+## 📸 A closer look
+
+### Charting
+
+Candlesticks, bars, line, or area — 8 timeframes, six technical indicators, and a live legend under your cursor showing OHLC, volume, and every active indicator's value for the candle you're pointing at.
+
 <img src="docs/screenshots/chart.png" alt="Candlestick chart with SMA/RSI/MACD indicators and hover legend" width="100%" />
+
+<br/>
+
+### Live sector heatmap
+
+The whole US equity market as a treemap — sized by market cap, colored by daily % change, refreshing every few seconds so nothing you're watching ever goes stale.
+
+<img src="docs/screenshots/heatmap.png" alt="Live sector heatmap of the US equity market" width="100%" />
+
+<br/>
+
+### Crypto
+
+Top assets with 7‑day sparklines and BTC/ETH dominance — click through to full OHLCV candlestick charting for any listed coin, same charting engine as stocks.
+
+<img src="docs/screenshots/crypto.png" alt="Crypto board with sparklines and dominance" width="100%" />
+
+<br/>
+
+### News
+
+Headlines aggregated and de‑duplicated across multiple sources, filterable per‑symbol or global, so you're never digging through five tabs to catch up.
+
+<img src="docs/screenshots/news.png" alt="Per-symbol and global news feed, aggregated and de-duplicated" width="100%" />
 
 <br/>
 
@@ -72,14 +102,6 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | Macro (Treasury yields, VIX) | FRED (Federal Reserve) | — |
 
 > ⚠️ These are public endpoints, not officially licensed data feeds — treat prices as delayed/indicative, not execution‑grade. See [`server/src/providers/`](server/src/providers) — each provider is a small, isolated module, so swapping or adding a data source is a 30‑minute job.
-
-<br/>
-
-<img src="docs/screenshots/heatmap.png" alt="Live sector heatmap of the US equity market" width="49%" /> <img src="docs/screenshots/crypto.png" alt="Crypto board with sparklines and dominance" width="49%" />
-
-<br/>
-
-<img src="docs/screenshots/news.png" alt="Per-symbol and global news feed, aggregated and de-duplicated" width="100%" />
 
 <br/>
 
@@ -186,6 +208,6 @@ For personal and educational use only. Market data comes from public endpoints a
 
 <div align="center">
 
-If OpenTerminal saved you from a Bloomberg subscription, **star the repo** ⭐ — it's the best way to support the project.
+**star the repo** ⭐ — it's the best way to support the project.
 
 </div>
