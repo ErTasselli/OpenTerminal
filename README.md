@@ -86,7 +86,7 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 ## 🚀 Quick start
 
 ```bash
-git clone https://github.com/<your-username>/openterminal.git
+git clone https://github.com/ErTasselli/openterminal.git
 cd openterminal
 npm install
 npm run dev
