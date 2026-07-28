@@ -1,0 +1,15 @@
+{
+  "name": "openterminal",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c yellow,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "concurrently -n api,web \"npm run start -w server\" \"npm run start -w web\"",
+    "test": "npm run test -w server",
+    "lint": "npm run lint -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
