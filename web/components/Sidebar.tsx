@@ -14,6 +14,9 @@ const ITEMS: Array<{ type: WidgetType; label: string; key: string }> = [
   { type: "ai", label: "AI ASSIST", key: "⌥9" },
   { type: "watchlist", label: "WATCHLIST", key: "" },
   { type: "macro", label: "MACRO", key: "" },
+  { type: "tape", label: "TIME & SALES", key: "" },
+  { type: "tv", label: "LIVE TV", key: "" },
+  { type: "recap", label: "MARKET RECAP", key: "" },
 ];
 
 export default function Sidebar() {

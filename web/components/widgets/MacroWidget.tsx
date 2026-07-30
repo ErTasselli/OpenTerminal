@@ -28,7 +28,7 @@ export default function MacroWidget() {
       <div className="px-2 py-1 dim text-[10px] uppercase flex justify-between">
         <span>US Treasury Yield Curve</span>
         {data.vix !== null && (
-          <span>
+          <span className="cursor-pointer" onClick={() => setActiveSymbol("^VIX")}>
             VIX <Flash value={data.vix} className="amber">{fmt(data.vix, 2)}</Flash>
           </span>
         )}

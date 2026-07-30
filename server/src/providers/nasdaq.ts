@@ -184,3 +184,25 @@ export async function optionChain(symbol: string, expiry?: string): Promise<Nasd
   };
 }
 
+export type StockTrade = { time: string; price: number | null; volume: number | null };
+
+/**
+ * Nasdaq's own "NLS" (Nasdaq Last Sale) real-time trade tape — the same feed
+ * that powers the "Latest Real-Time Trades" widget on a Nasdaq stock page.
+ * Genuinely tick-by-tick and free, but only populated during active trading
+ * hours (pre/post-market and closed-market windows return an empty list).
+ */
+export async function realtimeTrades(symbol: string): Promise<StockTrade[]> {
+  const data = await nfetch(
+    `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/realtime-trades?assetclass=stocks&recordfilter=all&limit=50&offset=0`
+  );
+  const rows: any[] = data.rows ?? [];
+  return rows
+    .map((r) => ({
+      time: r.nlsTime ?? r.time ?? "",
+      price: money(r.nlsPrice ?? r.price),
+      volume: money(r.nlsShareVolume ?? r.shareVolume ?? r.volume),
+    }))
+    .filter((t) => t.price !== null);
+}
+

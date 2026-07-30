@@ -214,6 +214,21 @@ marketRouter.get("/news", async (req, res) => {
   }
 });
 
+// ---- real-time trades (time & sales) ----
+
+marketRouter.get("/trades/:symbol", async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    const [trades, quotes] = await Promise.all([
+      cached(`trades:${symbol}`, 2_000, () => nasdaq.realtimeTrades(symbol)),
+      getQuotes([symbol]),
+    ]);
+    res.json({ session: quotes[0]?.marketState ?? null, trades });
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
 // ---- options ----
 
 marketRouter.get("/options/:symbol", async (req, res) => {
@@ -383,6 +398,114 @@ marketRouter.get("/sectors", async (_req, res) => {
     res.json([...new Set(rows.map((r) => r.sector))].sort());
   } catch (err) {
     res.json([]);
+  }
+});
+
+// ---- market recap: templated end-of-day-style narrative + supporting stats ----
+
+const RECAP_TTL = 15_000;
+
+function pct(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "flat";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+
+function buildRecapSummary(d: {
+  indexes: Array<{ symbol: string; label: string; changePercent: number | null }>;
+  bestSector?: { sector: string; avgChangePercent: number };
+  worstSector?: { sector: string; avgChangePercent: number };
+  gainers: tradingview.MarketRow[];
+  losers: tradingview.MarketRow[];
+  vix: number | null;
+}): string {
+  const spy = d.indexes.find((i) => i.symbol === "SPY");
+  const qqq = d.indexes.find((i) => i.symbol === "QQQ");
+  const dia = d.indexes.find((i) => i.symbol === "DIA");
+  const spyChange = spy?.changePercent ?? 0;
+  const dir = spyChange > 0.15 ? "trading higher" : spyChange < -0.15 ? "trading lower" : "little changed";
+
+  const parts: string[] = [];
+  parts.push(
+    `US stocks are ${dir}, with the S&P 500 ${pct(spy?.changePercent)}, the Nasdaq 100 ${pct(qqq?.changePercent)} and the Dow ${pct(dia?.changePercent)}.`
+  );
+  if (d.bestSector && d.worstSector && d.bestSector.sector !== d.worstSector.sector) {
+    parts.push(
+      `${d.bestSector.sector} is leading sector performance (${pct(d.bestSector.avgChangePercent)}), while ${d.worstSector.sector} lags (${pct(d.worstSector.avgChangePercent)}).`
+    );
+  }
+  if (d.gainers[0] && d.losers[0]) {
+    parts.push(
+      `${d.gainers[0].name} paces advancers, up ${pct(d.gainers[0].changePercent)}, while ${d.losers[0].name} is the biggest decliner, down ${pct(
+        d.losers[0].changePercent
+      )}.`
+    );
+  }
+  if (d.vix !== null) {
+    parts.push(`The VIX volatility index is at ${d.vix.toFixed(2)}.`);
+  }
+  return parts.join(" ");
+}
+
+marketRouter.get("/recap", async (req, res) => {
+  try {
+    const data = await cached("recap:full", RECAP_TTL, async () => {
+      const [quotes, vix, rows, headlines] = await Promise.all([
+        getQuotes(Object.keys(INDEX_PROXIES)),
+        cached("fred:VIXCLS", 300_000, () => fred.latest("VIXCLS")).catch(() => null),
+        marketRows(),
+        cached("news:recap", NEWS_TTL, async () => {
+          const lists = await Promise.allSettled([
+            news.topNews("stock market"),
+            news.topNews("federal reserve economy"),
+          ]);
+          const ok = lists.filter((r) => r.status === "fulfilled").map((r) => (r as any).value);
+          if (ok.length === 0) throw new Error("all news sources failed");
+          return news.dedupe(ok);
+        }),
+      ]);
+
+      const indexes = quotes.map((q) => ({
+        symbol: q.symbol,
+        label: INDEX_PROXIES[q.symbol] ?? q.symbol,
+        price: q.price,
+        changePercent: q.changePercent,
+      }));
+
+      const ranked = rows.filter((r) => (r.marketCap ?? 0) > 2_000_000_000 && r.changePercent !== null);
+      const gainers = [...ranked].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0)).slice(0, 5);
+      const losers = [...ranked].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0)).slice(0, 5);
+
+      const sectorMap = new Map<string, { sum: number; count: number }>();
+      for (const r of rows) {
+        if (r.changePercent === null || !r.sector) continue;
+        const cur = sectorMap.get(r.sector) ?? { sum: 0, count: 0 };
+        cur.sum += r.changePercent;
+        cur.count += 1;
+        sectorMap.set(r.sector, cur);
+      }
+      const sectors = [...sectorMap.entries()]
+        .map(([sector, { sum, count }]) => ({ sector, avgChangePercent: sum / count }))
+        .sort((a, b) => b.avgChangePercent - a.avgChangePercent);
+
+      const bestSector = sectors[0];
+      const worstSector = sectors[sectors.length - 1];
+
+      const summary = buildRecapSummary({ indexes, bestSector, worstSector, gainers, losers, vix: vix?.value ?? null });
+
+      return {
+        summary,
+        updatedAt: new Date().toISOString(),
+        indexes,
+        vix: vix?.value ?? null,
+        gainers,
+        losers,
+        sectors: sectors.slice(0, 3).concat(sectors.length > 3 ? sectors.slice(-3) : []),
+        news: headlines.slice(0, 6),
+      };
+    });
+    res.json(data);
+  } catch (err) {
+    fail(req, res, err);
   }
 });
 

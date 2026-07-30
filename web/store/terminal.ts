@@ -14,7 +14,10 @@ export type WidgetType =
   | "macro"
   | "options"
   | "portfolio"
-  | "ai";
+  | "ai"
+  | "tape"
+  | "tv"
+  | "recap";
 
 export type WidgetInstance = {
   id: string;
@@ -71,6 +74,9 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
   options: { w: 12, h: 9 },
   portfolio: { w: 7, h: 8 },
   ai: { w: 5, h: 10 },
+  tape: { w: 4, h: 10 },
+  tv: { w: 6, h: 11 },
+  recap: { w: 5, h: 12 },
 };
 
 export const useTerminal = create<TerminalState>()(

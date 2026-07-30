@@ -124,6 +124,39 @@ export async function marketScan(limit = 1500): Promise<MarketRow[]> {
 
 export type SearchResult = { symbol: string; name: string; exchange: string; type: string };
 
+// Non-US exchanges we can serve via Yahoo Finance (our international fallback —
+// Nasdaq/TradingView quote & history endpoints only cover US-listed names).
+// Matched case-insensitively against TradingView's `exchange` field, which is
+// sometimes a short code ("XETR") and sometimes a full name ("Euronext Paris").
+const EXCHANGE_SUFFIX: Array<{ match: RegExp; suffix: string }> = [
+  { match: /^(mil|bit)$/i, suffix: ".MI" }, // Borsa Italiana / Euronext Milan
+  { match: /euronext paris|^par$/i, suffix: ".PA" },
+  { match: /euronext amsterdam|^ams$/i, suffix: ".AS" },
+  { match: /euronext brussels|^bru$/i, suffix: ".BR" },
+  { match: /euronext lisbon|^lis$/i, suffix: ".LS" },
+  { match: /^(xetr|fra|ger|gettex)$/i, suffix: ".DE" }, // Germany (Xetra/Frankfurt)
+  { match: /^(lse|lsin)$/i, suffix: ".L" }, // London
+  { match: /^(bme|mce)$/i, suffix: ".MC" }, // Spain (Madrid)
+  { match: /^(six|swx|ebs)$/i, suffix: ".SW" }, // Switzerland
+  { match: /^omxsto$/i, suffix: ".ST" }, // Stockholm
+  { match: /^omxcop$/i, suffix: ".CO" }, // Copenhagen
+  { match: /^omxhex$/i, suffix: ".HE" }, // Helsinki
+  { match: /^oslo$/i, suffix: ".OL" }, // Oslo
+  { match: /^(tsx|tsxv)$/i, suffix: ".TO" }, // Toronto
+  { match: /^asx$/i, suffix: ".AX" }, // Australia
+  { match: /^hkex$/i, suffix: ".HK" }, // Hong Kong
+  { match: /^tse$/i, suffix: ".T" }, // Tokyo
+  { match: /^nse$/i, suffix: ".NS" }, // India (NSE)
+  { match: /^bse$/i, suffix: ".BO" }, // India (BSE)
+];
+
+function yahooSuffixFor(exchange: string): string {
+  for (const { match, suffix } of EXCHANGE_SUFFIX) {
+    if (match.test(exchange)) return suffix;
+  }
+  return "";
+}
+
 export async function search(query: string): Promise<SearchResult[]> {
   const url = `https://symbol-search.tradingview.com/symbol_search/v3/?text=${encodeURIComponent(
     query
@@ -136,10 +169,17 @@ export async function search(query: string): Promise<SearchResult[]> {
   return rows
     .filter((r) => ["stock", "fund", "dr"].includes(r.type))
     .slice(0, 15)
-    .map((r) => ({
-      symbol: strip(r.symbol),
-      name: strip(r.description ?? r.symbol),
-      exchange: r.exchange ?? "",
-      type: r.type ?? "",
-    }));
+    .map((r) => {
+      const exchange = r.exchange ?? "";
+      const symbol = strip(r.symbol);
+      return {
+        // Non-US listings get a Yahoo-compatible suffix (e.g. "ISP" -> "ISP.MI")
+        // so quote/chart lookups downstream can actually resolve them — Nasdaq's
+        // API only covers US tickers, and a bare symbol collides with US names.
+        symbol: symbol.includes(".") ? symbol : symbol + yahooSuffixFor(exchange),
+        name: strip(r.description ?? r.symbol),
+        exchange,
+        type: r.type ?? "",
+      };
+    });
 }
