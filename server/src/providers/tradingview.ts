@@ -122,6 +122,43 @@ export async function marketScan(limit = 1500): Promise<MarketRow[]> {
     .filter((r) => r.symbol && r.exchange !== "OTC");
 }
 
+export type EarningsInfo = {
+  symbol: string;
+  nextEarningsDate: number | null; // unix seconds
+  lastEarningsDate: number | null;
+  epsForecast: number | null;
+};
+
+const EARNINGS_COLUMNS = ["earnings_release_next_date", "earnings_release_date", "earnings_per_share_forecast_next_fq"];
+
+/**
+ * Next/last earnings date + forward EPS estimate for a batch of US symbols.
+ * We don't know each symbol's exchange up front, so every symbol is queried
+ * under NASDAQ/NYSE/AMEX at once in a single request — TradingView just drops
+ * whichever prefixes don't match, so exactly one row comes back per symbol.
+ */
+export async function earningsCalendar(symbols: string[]): Promise<EarningsInfo[]> {
+  const exchanges = ["NASDAQ", "NYSE", "AMEX"];
+  const tickers = symbols.flatMap((s) => exchanges.map((ex) => `${ex}:${s}`));
+  const res = await fetch("https://scanner.tradingview.com/america/scan", {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ symbols: { tickers }, columns: EARNINGS_COLUMNS }),
+  });
+  if (!res.ok) throw new Error(`tradingview scan ${res.status}`);
+  const json = await res.json();
+  const rows: Array<{ s: string; d: (number | null)[] }> = json?.data ?? [];
+
+  const bySymbol = new Map<string, EarningsInfo>();
+  for (const row of rows) {
+    const symbol = row.s.split(":")[1];
+    if (bySymbol.has(symbol)) continue;
+    const [nextEarningsDate, lastEarningsDate, epsForecast] = row.d;
+    bySymbol.set(symbol, { symbol, nextEarningsDate, lastEarningsDate, epsForecast });
+  }
+  return symbols.map((s) => bySymbol.get(s) ?? { symbol: s, nextEarningsDate: null, lastEarningsDate: null, epsForecast: null });
+}
+
 export type SearchResult = { symbol: string; name: string; exchange: string; type: string };
 
 // Non-US exchanges we can serve via Yahoo Finance (our international fallback —

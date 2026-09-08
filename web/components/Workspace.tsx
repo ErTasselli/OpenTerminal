@@ -16,7 +16,7 @@ import MacroWidget from "./widgets/MacroWidget";
 import OptionsWidget from "./widgets/OptionsWidget";
 import PortfolioWidget from "./widgets/PortfolioWidget";
 import AiWidget from "./widgets/AiWidget";
-import TimeSalesWidget from "./widgets/TimeSalesWidget";
+import CalendarWidget from "./widgets/CalendarWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
 
@@ -35,7 +35,7 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "options": return <OptionsWidget widget={widget} />;
     case "portfolio": return <PortfolioWidget />;
     case "ai": return <AiWidget />;
-    case "tape": return <TimeSalesWidget widget={widget} />;
+    case "calendar": return <CalendarWidget />;
     case "tv": return <TvWidget />;
     case "recap": return <RecapWidget />;
   }
@@ -91,7 +91,7 @@ const TITLES: Record<string, string> = {
   quote: "Quote", chart: "Chart", watchlist: "Watchlist", news: "News",
   heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
-  tape: "Time & Sales", tv: "Live TV", recap: "Market Recap",
+  calendar: "Calendar", tv: "Live TV", recap: "Market Recap",
 };
 
 export default function Workspace() {
@@ -102,7 +102,7 @@ export default function Workspace() {
   const toggleLinked = useTerminal((s) => s.toggleLinked);
   const activeSymbol = useTerminal((s) => s.activeSymbol);
 
-  const symbolAware = new Set(["quote", "chart", "news", "options", "tape"]);
+  const symbolAware = new Set(["quote", "chart", "news", "options"]);
 
   return (
     <Grid

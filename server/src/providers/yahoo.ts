@@ -264,19 +264,3 @@ export async function options(symbol: string, date?: number): Promise<any> {
   };
 }
 
-// ---- earnings / calendar (per-symbol, via quoteSummary) ----
-
-export async function calendarEvents(symbol: string): Promise<any> {
-  const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(
-    symbol
-  )}?modules=calendarEvents,defaultKeyStatistics`;
-  const json = await yfetch(url, true);
-  const r = json?.quoteSummary?.result?.[0];
-  const earnings = r?.calendarEvents?.earnings;
-  return {
-    symbol,
-    earningsDates: (earnings?.earningsDate ?? []).map((d: any) => d?.raw ?? null).filter(Boolean),
-    exDividendDate: r?.calendarEvents?.exDividendDate?.raw ?? null,
-    dividendDate: r?.calendarEvents?.dividendDate?.raw ?? null,
-  };
-}

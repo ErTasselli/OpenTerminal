@@ -15,7 +15,7 @@ export type WidgetType =
   | "options"
   | "portfolio"
   | "ai"
-  | "tape"
+  | "calendar"
   | "tv"
   | "recap";
 
@@ -74,7 +74,7 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
   options: { w: 12, h: 9 },
   portfolio: { w: 7, h: 8 },
   ai: { w: 5, h: 10 },
-  tape: { w: 4, h: 10 },
+  calendar: { w: 12, h: 11 },
   tv: { w: 6, h: 11 },
   recap: { w: 5, h: 12 },
 };

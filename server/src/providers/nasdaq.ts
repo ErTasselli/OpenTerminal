@@ -1,7 +1,7 @@
 import type { Quote, Candle } from "./yahoo.js";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
-const HEADERS = { "User-Agent": UA, Accept: "application/json", Origin: "https://www.nasdaq.com" };
+const HEADERS = { "User-Agent": UA, Accept: "application/json", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
 
 // Polite concurrency limiter — Nasdaq's public API has no documented limit,
 // but we stay gentle to avoid tripping bot-detection under bursty load.
@@ -184,25 +184,31 @@ export async function optionChain(symbol: string, expiry?: string): Promise<Nasd
   };
 }
 
-export type StockTrade = { time: string; price: number | null; volume: number | null };
+export type EarningsSurpriseRow = {
+  fiscalQtrEnd: string;
+  dateReported: number; // unix seconds, UTC midnight
+  eps: number | null;
+  consensusForecast: number | null;
+  surprisePercent: number | null;
+};
 
-/**
- * Nasdaq's own "NLS" (Nasdaq Last Sale) real-time trade tape — the same feed
- * that powers the "Latest Real-Time Trades" widget on a Nasdaq stock page.
- * Genuinely tick-by-tick and free, but only populated during active trading
- * hours (pre/post-market and closed-market windows return an empty list).
- */
-export async function realtimeTrades(symbol: string): Promise<StockTrade[]> {
-  const data = await nfetch(
-    `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/realtime-trades?assetclass=stocks&recordfilter=all&limit=50&offset=0`
-  );
-  const rows: any[] = data.rows ?? [];
+/** Last several quarters of reported EPS vs consensus, newest first. */
+export async function earningsSurprise(symbol: string): Promise<EarningsSurpriseRow[]> {
+  const data = await nfetch(`https://api.nasdaq.com/api/company/${encodeURIComponent(symbol)}/earnings-surprise`);
+  const rows: any[] = data.earningsSurpriseTable?.rows ?? [];
   return rows
-    .map((r) => ({
-      time: r.nlsTime ?? r.time ?? "",
-      price: money(r.nlsPrice ?? r.price),
-      volume: money(r.nlsShareVolume ?? r.shareVolume ?? r.volume),
-    }))
-    .filter((t) => t.price !== null);
+    .map((r) => {
+      const [m, d, y] = String(r.dateReported ?? "").split("/").map(Number);
+      if (!m || !d || !y) return null;
+      return {
+        fiscalQtrEnd: r.fiscalQtrEnd ?? "",
+        dateReported: Math.round(Date.UTC(y, m - 1, d) / 1000),
+        eps: num(String(r.eps ?? "")),
+        consensusForecast: num(r.consensusForecast),
+        surprisePercent: num(r.percentageSurprise),
+      };
+    })
+    .filter((r): r is EarningsSurpriseRow => r !== null);
 }
+
 

@@ -44,6 +44,7 @@ No signup. No credit card. No rate‑limited demo tier. Clone it, `npm install`,
 - 🪙 **Crypto board** — top assets with 7‑day sparklines, BTC/ETH dominance, and full OHLCV charting for any listed coin
 - 🏦 **Macro dashboard** — live US Treasury yield curve, VIX, and major index/commodity proxies
 - 💼 **Portfolio tracker** — log buy/sell transactions, track average cost, realized & unrealized P&L (persisted in SQLite)
+- 📅 **Calendar** — economic events (Fed, ECB, CPI, NFP and more) with consensus forecast, previous reading and, for the major US/EU releases, the actual outcome; plus a per‑watchlist earnings calendar with click‑through history showing forecast vs. actual EPS for the last several quarters and the stock's next‑day price move
 - 🤖 **AI assistant** (optional) — ask questions about the symbol you're looking at, powered by Claude, fully context‑aware of the terminal's current data
 - ⚡ **Near real‑time updates** — quotes and indexes refresh every second with a subtle flash on change, so you always know what just moved
 - ⌨️ **Keyboard shortcuts** everywhere — `⌘K` to search, `⌥1`–`⌥9` to add any widget
@@ -100,6 +101,10 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | Crypto quotes & board | CoinGecko | Binance public API |
 | Crypto candles | Binance public API (klines) | — |
 | Macro (Treasury yields, VIX) | FRED (Federal Reserve) | — |
+| Economic calendar (schedule, forecast, previous) | Forex Factory public feed | — |
+| Economic calendar (actual — Fed / ECB / CPI / NFP only) | FRED (Federal Reserve) | — |
+| Earnings calendar (next/last date, EPS estimate) | TradingView scanner API | — |
+| Earnings history (forecast vs. actual, surprise %) | Nasdaq earnings‑surprise API | — |
 
 > ⚠️ These are public endpoints, not officially licensed data feeds — treat prices as delayed/indicative, not execution‑grade. See [`server/src/providers/`](server/src/providers) — each provider is a small, isolated module, so swapping or adding a data source is a 30‑minute job.
 
@@ -157,13 +162,13 @@ Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode).
 ```
 ├── server/                  # Express + TypeScript API
 │   └── src/
-│       ├── providers/       # nasdaq, tradingview, yahoo, stooq, fred, coingecko, binance, news
+│       ├── providers/       # nasdaq, tradingview, yahoo, stooq, fred, econcalendar, coingecko, binance, news
 │       ├── routes/          # market, portfolio, ai
 │       ├── cache.ts         # TTL cache with stale-while-revalidate fallback
 │       └── db.ts            # SQLite (better-sqlite3, WAL)
 └── web/                      # Next.js 15 + React 19 + Tailwind 4
     ├── components/           # TopBar, Sidebar, Workspace, CommandPalette
-    ├── components/widgets/   # Chart, Quote, Watchlist, News, Screener, Heatmap, Crypto, Options, Macro, Portfolio, AI
+    ├── components/widgets/   # Chart, Quote, Watchlist, News, Screener, Heatmap, Crypto, Options, Macro, Portfolio, Calendar, AI
     ├── lib/                  # API client, technical indicators
     └── store/                # Zustand store (workspace layout, persisted)
 ```
@@ -174,8 +179,6 @@ Run tests with `npm test` (Vitest, no network calls). CI runs on every push — 
 
 ## 🗺️ Roadmap
 
-- [ ] Multiple workspaces / tabs
-- [ ] Economic calendar (Fed / ECB / CPI / NFP)
 - [ ] Chart drawing tools & multi‑asset comparison overlay
 - [ ] Black‑Scholes Greeks on the options chain
 - [ ] Price alerts with desktop notifications

@@ -9,6 +9,7 @@ import * as tradingview from "../providers/tradingview.js";
 import * as coingecko from "../providers/coingecko.js";
 import * as binance from "../providers/binance.js";
 import * as news from "../providers/news.js";
+import * as econcalendar from "../providers/econcalendar.js";
 
 export const marketRouter = Router();
 
@@ -292,16 +293,12 @@ marketRouter.get("/news", async (req, res) => {
   }
 });
 
-// ---- real-time trades (time & sales) ----
+// ---- economic calendar (Fed / ECB / CPI / NFP with forecast + actual) ----
 
-marketRouter.get("/trades/:symbol", async (req, res) => {
-  const symbol = req.params.symbol.toUpperCase();
+marketRouter.get("/econ-calendar", async (req, res) => {
   try {
-    const [trades, quotes] = await Promise.all([
-      cached(`trades:${symbol}`, 2_000, () => nasdaq.realtimeTrades(symbol)),
-      getQuotes([symbol]),
-    ]);
-    res.json({ session: quotes[0]?.marketState ?? null, trades });
+    const data = await cached("econ-calendar", 900_000, () => econcalendar.weeklyEvents());
+    res.json(data);
   } catch (err) {
     fail(req, res, err);
   }
@@ -597,9 +594,44 @@ marketRouter.get("/calendar", async (req, res) => {
     .slice(0, 30);
   if (symbols.length === 0) return res.status(400).json({ error: "symbols required" });
   try {
-    const data = await cached(`calendar:${symbols.join(",")}`, 3_600_000, async () => {
-      const results = await Promise.allSettled(symbols.map((s) => yahoo.calendarEvents(s)));
-      return results.filter((r) => r.status === "fulfilled").map((r) => (r as any).value);
+    const data = await cached(`calendar:${symbols.join(",")}`, 3_600_000, () => tradingview.earningsCalendar(symbols));
+    res.json(data);
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// ---- earnings history: forecast vs actual per quarter, plus next-day price move ----
+
+marketRouter.get("/earnings-history/:symbol", async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    const data = await cached(`earnings-history:${symbol}`, 3_600_000, async () => {
+      const [surprises, candles] = await Promise.all([
+        nasdaq.earningsSurprise(symbol),
+        withFallback([
+          ["nasdaq", () => nasdaq.history(symbol, "1Y")],
+          ["yahoo", () => yahoo.history(symbol, yahooRange("1Y").range, yahooRange("1Y").interval)],
+          ["stooq", () => stooq.history(symbol)],
+        ]),
+      ]);
+      const sorted = [...candles].sort((a, b) => a.time - b.time);
+      // Nearest trading-day close on/after a given date, and the close of the
+      // trading day right after that — the "day after earnings" move.
+      const closeOnOrAfter = (unixSeconds: number) => {
+        for (let i = 0; i < sorted.length; i++) {
+          if (sorted[i].time >= unixSeconds - 3 * 86_400) return i;
+        }
+        return -1;
+      };
+      return surprises.map((s) => {
+        const idx = closeOnOrAfter(s.dateReported);
+        const dayAfterChangePercent =
+          idx >= 0 && idx + 1 < sorted.length
+            ? ((sorted[idx + 1].close - sorted[idx].close) / sorted[idx].close) * 100
+            : null;
+        return { ...s, dayAfterChangePercent };
+      });
     });
     res.json(data);
   } catch (err) {
