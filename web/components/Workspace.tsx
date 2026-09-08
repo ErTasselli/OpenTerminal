@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import GridLayout, { WidthProvider } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -40,6 +41,52 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
   }
 }
 
+function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSymbol: string }) {
+  const setWidgetSymbol = useTerminal((s) => s.setWidgetSymbol);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const shown = widget.linked ? activeSymbol : widget.symbol ?? activeSymbol;
+
+  useEffect(() => {
+    if (!editing) return;
+    setDraft(shown);
+    requestAnimationFrame(() => inputRef.current?.select());
+  }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value.toUpperCase())}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            const v = draft.trim();
+            if (v) setWidgetSymbol(widget.id, v);
+            setEditing(false);
+          }
+          if (e.key === "Escape") setEditing(false);
+        }}
+        onBlur={() => setEditing(false)}
+        className="ml-2 w-16 !border-0 !border-b !border-[var(--amber-dim)] bg-transparent text-[var(--text)] px-0 py-0 text-[13px] leading-none"
+      />
+    );
+  }
+
+  return (
+    <span
+      className="ml-2 text-[var(--text)] cursor-pointer hover:text-[var(--amber)]"
+      title="Click to set this widget's ticker"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={() => setEditing(true)}
+    >
+      {shown}
+    </span>
+  );
+}
+
 const TITLES: Record<string, string> = {
   quote: "Quote", chart: "Chart", watchlist: "Watchlist", news: "News",
   heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
@@ -73,9 +120,7 @@ export default function Workspace() {
             <div className="panel-title">
               <span>
                 {TITLES[w.type]}
-                {symbolAware.has(w.type) && (
-                  <span className="ml-2 text-[var(--text)]">{w.linked ? activeSymbol : w.symbol ?? activeSymbol}</span>
-                )}
+                {symbolAware.has(w.type) && <SymbolTag widget={w} activeSymbol={activeSymbol} />}
               </span>
               <span className="flex gap-2 items-center">
                 {symbolAware.has(w.type) && (
