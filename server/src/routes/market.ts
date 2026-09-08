@@ -22,6 +22,73 @@ function fail(req: any, res: any, err: unknown) {
   res.status(502).json({ error: "All data providers are temporarily unavailable. Try again shortly.", detail });
 }
 
+// ---- VIX: served from FRED (daily close), since it's an index rather than a
+// tradable stock/ETF — Nasdaq's stock API doesn't carry it, and routing it
+// through Yahoo would make it depend on Yahoo's flaky rate limits for no reason.
+
+function isVix(symbol: string): boolean {
+  return symbol.toUpperCase() === "^VIX" || symbol.toUpperCase() === "VIX";
+}
+
+async function vixQuote(): Promise<yahoo.Quote> {
+  const points = await fred.series("VIXCLS", 5);
+  if (points.length === 0) throw new Error("fred: no VIX data");
+  const last = points[points.length - 1];
+  const prev = points.length > 1 ? points[points.length - 2] : null;
+  const price = last.value;
+  const previousClose = prev?.value ?? null;
+  const change = previousClose !== null ? price - previousClose : null;
+  const changePercent = previousClose ? (change! / previousClose) * 100 : null;
+  return {
+    symbol: "^VIX",
+    name: "CBOE Volatility Index",
+    price,
+    change,
+    changePercent,
+    open: null,
+    high: null,
+    low: null,
+    previousClose,
+    bid: null,
+    ask: null,
+    volume: null,
+    avgVolume: null,
+    marketCap: null,
+    pe: null,
+    eps: null,
+    dividendYield: null,
+    week52High: null,
+    week52Low: null,
+    beta: null,
+    sharesOutstanding: null,
+    currency: "USD",
+    exchange: "CBOE",
+    marketState: null,
+    time: null,
+    source: "fred",
+  };
+}
+
+const VIX_RANGE_N: Record<string, number> = {
+  "1D": 5,
+  "5D": 5,
+  "1M": 22,
+  "6M": 130,
+  YTD: 200,
+  "1Y": 252,
+  "5Y": 1260,
+  MAX: 20_000,
+};
+
+async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
+  const n = VIX_RANGE_N[rangeKey] ?? 130;
+  const points = await fred.series("VIXCLS", n);
+  return points.map((p) => {
+    const time = Math.floor(new Date(p.date + "T00:00:00Z").getTime() / 1000);
+    return { time, open: p.value, high: p.value, low: p.value, close: p.value, volume: 0 };
+  });
+}
+
 // ---- quotes (per-symbol cache, so overlapping widgets share one fetch) ----
 
 /**
@@ -49,6 +116,15 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
     const results = await Promise.allSettled(cryptoSymbols.map((s) => binance.quote(s)));
     results.forEach((r, i) => {
       if (r.status === "fulfilled") fetched.set(cryptoSymbols[i], r.value);
+    });
+    remaining = remaining.filter((s) => !fetched.has(s));
+  }
+
+  const vixSymbols = remaining.filter((s) => isVix(s));
+  if (vixSymbols.length > 0) {
+    const results = await Promise.allSettled(vixSymbols.map(() => vixQuote()));
+    results.forEach((r, i) => {
+      if (r.status === "fulfilled") fetched.set(vixSymbols[i], r.value);
     });
     remaining = remaining.filter((s) => !fetched.has(s));
   }
@@ -143,6 +219,8 @@ marketRouter.get("/history/:symbol", async (req, res) => {
     const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
       binance.CRYPTO_SYMBOLS.has(symbol)
         ? binance.history(symbol, rangeKey)
+        : isVix(symbol)
+        ? vixHistory(rangeKey)
         : withFallback([
             ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
             ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],

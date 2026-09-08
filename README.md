@@ -198,7 +198,9 @@ Please open an issue first for anything non‑trivial so we can align on approac
 
 ## ⚖️ Disclaimer
 
-For personal and educational use only. Market data comes from public endpoints and may be delayed, incomplete, or occasionally wrong — **do not use this for real investment decisions**. Respect the terms of service of the underlying data providers.
+For personal and educational use only. Market data comes from public endpoints and may be delayed, incomplete, or occasionally wrong — **do not use this for real investment decisions**.
+
+This project is not affiliated with, endorsed by, or sponsored by any of the data providers it connects to. It does not host or redistribute data to third parties — it's source code you run yourself, fetching data directly from the provider. Respect the terms of service of the underlying data providers; most free sources are licensed for personal/research use only and prohibit commercial redistribution.
 
 ## License
 
