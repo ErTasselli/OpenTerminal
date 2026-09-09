@@ -5,12 +5,20 @@ import { apiGet, fmt, fmtBig, pctClass, type Quote } from "../../lib/api";
 import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
 import Flash from "../Flash";
 
+type ShortVolume = { date: string; shortVolume: number; shortExemptVolume: number; totalVolume: number; shortVolumePercent: number };
+
 export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
   const symbol = useWidgetSymbol(widget);
   const { data, error } = useQuery({
     queryKey: ["quote", symbol],
     queryFn: async () => (await apiGet<Quote[]>(`/api/quotes?symbols=${symbol}`))[0],
     refetchInterval: 1_000,
+  });
+  // FINRA's Reg SHO file only updates once a day (next-morning), so no point polling it fast.
+  const { data: shortVol } = useQuery({
+    queryKey: ["short-volume", symbol],
+    queryFn: () => apiGet<ShortVolume | null>(`/api/short-volume/${symbol}`),
+    staleTime: 3_600_000,
   });
 
   if (error) return <div className="p-2 down">Error: {(error as Error).message}</div>;
@@ -25,6 +33,7 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
     ["Ask", fmt(data.ask)],
     ["Volume", fmtBig(data.volume)],
     ["Avg Vol 3M", fmtBig(data.avgVolume)],
+    ...(shortVol ? ([["Short Vol %", fmt(shortVol.shortVolumePercent, 1) + "%"]] as Array<[string, string]>) : []),
     ["Mkt Cap", fmtBig(data.marketCap)],
     ["P/E (ttm)", fmt(data.pe)],
     ["EPS (ttm)", fmt(data.eps)],

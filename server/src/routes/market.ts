@@ -10,6 +10,7 @@ import * as coingecko from "../providers/coingecko.js";
 import * as binance from "../providers/binance.js";
 import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
+import * as finra from "../providers/finra.js";
 
 export const marketRouter = Router();
 
@@ -634,6 +635,20 @@ marketRouter.get("/earnings-history/:symbol", async (req, res) => {
       });
     });
     res.json(data);
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// ---- short sale volume (FINRA Reg SHO daily file) ----
+
+marketRouter.get("/short-volume/:symbol", async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    const day = await cached("finra-shortvol-day", 6 * 3_600_000, () => finra.latestDay());
+    const row = day.get(symbol);
+    if (!row) return res.json(null);
+    res.json({ ...row, shortVolumePercent: (row.shortVolume / row.totalVolume) * 100 });
   } catch (err) {
     fail(req, res, err);
   }
