@@ -11,6 +11,7 @@ import * as binance from "../providers/binance.js";
 import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
+import * as secedgar from "../providers/secedgar.js";
 
 export const marketRouter = Router();
 
@@ -649,6 +650,18 @@ marketRouter.get("/short-volume/:symbol", async (req, res) => {
     const row = day.get(symbol);
     if (!row) return res.json(null);
     res.json({ ...row, shortVolumePercent: (row.shortVolume / row.totalVolume) * 100 });
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// ---- insider transactions (SEC EDGAR Form 4) ----
+
+marketRouter.get("/insider/:symbol", async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    const data = await cached(`insider:${symbol}`, 3_600_000, () => secedgar.insiderTransactions(symbol));
+    res.json(data);
   } catch (err) {
     fail(req, res, err);
   }
