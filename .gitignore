@@ -5,5 +5,8 @@ out/
 *.log
 .env
 .env.local
-data/*.db
 .DS_Store
+
+
+# Database
+data/*.db*
