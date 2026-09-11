@@ -2,7 +2,7 @@
 
 # OpenTerminal
 
-**A Bloomberg Terminal‑style workspace for the rest of us — built entirely on free, public market data.**
+**A Terminal‑style workspace for the rest of us — built entirely on free, public market data.**
 
 Dark. Dense. Keyboard‑driven. Zero paid API keys, zero subscriptions.
 
