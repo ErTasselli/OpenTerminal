@@ -7,7 +7,7 @@ import { XMLParser } from "fast-xml-parser";
 // a bare product name or URL gets a flat 403, so this exact shape matters. SEC uses it to
 // reach whoever's operating a deployment if their traffic misbehaves, so self-hosters should
 // set SEC_EDGAR_CONTACT to their own email; this default is just enough to pass the check.
-const UA = `OpenTerminal ${process.env.SEC_EDGAR_CONTACT ?? "opensource@openterminal.dev"}`;
+const UA = `OpenTerminal ${process.env.SEC_EDGAR_CONTACT ?? "ertassellireplay@gmail.com"}`;
 const parser = new XMLParser({ ignoreAttributes: false });
 
 async function edgarFetch(url: string): Promise<any> {
