@@ -2,6 +2,9 @@
   "name": "openterminal",
   "private": true,
   "workspaces": ["server", "web"],
+  "overrides": {
+    "qs": "^6.16.0"
+  },
   "scripts": {
     "dev": "concurrently -n api,web -c yellow,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w server && npm run build -w web",

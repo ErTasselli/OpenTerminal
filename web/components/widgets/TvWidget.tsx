@@ -9,7 +9,6 @@ const CHANNELS = [
   { id: "bloomberg", label: "Bloomberg TV", url: "https://liveprodusphoenixeast.global.ssl.fastly.net/USPhx-HD/Channel-TX-USPhx-AWS-virginia-1/Source-USPhx-16k-1-s6lk2-BP-07-02-81ykIWnsMsg_live.m3u8" },
   { id: "yahoo", label: "Yahoo Finance", url: "https://d1ewctnvcwvvvu.cloudfront.net/playlist.m3u8" },
   { id: "cnbc", label: "CNBC", url: "https://gpuserver3.tier1streams.com/CNBC/index.m3u8" },
-  { id: "fox", label: "Fox Business", url: "http://40.160.24.58/FOX_BUSINESS_NETWORK/index.m3u8" },
   { id: "cheddar", label: "Cheddar Business", url: "https://gpuserver3.tier1streams.com/CHEDDAR_BUSINESS/index.m3u8" },
   { id: "ndtv", label: "NDTV Profit", url: "https://ndtvprofit.akamaized.net/hls/live/2107404/ndtvprofit/master_1.m3u8" },
 ] as const;

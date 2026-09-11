@@ -3,10 +3,17 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+    # Bound to localhost by default: only this machine can reach the API.
+    # To expose it on your network/internet, bind wider here AND set API_KEY
+    # below explicitly (otherwise a fresh key is generated per container).
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - API_KEY=${API_KEY:-}
+      - API_HOST=0.0.0.0 # safe: still only published to 127.0.0.1 above
+      - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3000}
+      - DATA_DIR=/app/data
     volumes:
       - terminal-data:/app/data
     restart: unless-stopped
@@ -16,9 +23,13 @@ services:
       context: .
       dockerfile: web/Dockerfile
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - API_URL=http://api:4000
+      - API_KEY=${API_KEY:-}
+      - API_KEY_FILE=/app/data/.api-key
+    volumes:
+      - terminal-data:/app/data:ro
     depends_on:
       - api
     restart: unless-stopped

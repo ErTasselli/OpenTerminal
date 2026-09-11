@@ -133,6 +133,12 @@ npm run dev
 
 Without a key, everything else still works — the AI widget just shows a friendly "unavailable" message instead of failing.
 
+### Security defaults
+
+- The API binds to `127.0.0.1` and only accepts browser requests from `http://localhost:3000` by default — nothing else on your network can reach it out of the box.
+- The portfolio and AI endpoints require a shared secret. If you don't set `API_KEY` yourself, the API generates one on first run and saves it to `data/.api-key`; the bundled web app reads that file automatically, so local dev stays zero-config.
+- To expose this beyond your own machine, set `API_HOST=0.0.0.0`, `API_KEY=<a-strong-secret>` (on both the api and web processes), and `WEB_ORIGIN=<your actual origin>` explicitly. Don't do this without also keeping dependencies patched — see [Known limitations](#known-limitations) below.
+
 <br/>
 
 ## 🐳 Docker
@@ -141,7 +147,7 @@ Without a key, everything else still works — the AI widget just shows a friend
 docker compose up --build
 ```
 
-Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode).
+Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode). Ports are published on `127.0.0.1` only by default; see [Security defaults](#security-defaults) to expose it deliberately.
 
 <br/>
 
@@ -196,6 +202,13 @@ Pull requests are welcome, especially:
 - Bug fixes and UI polish
 
 Please open an issue first for anything non‑trivial so we can align on approach before you invest the time.
+
+<br/>
+
+## Known limitations
+
+- `npm audit` still flags two dependency advisories this project doesn't force-fix: `fast-xml-parser`'s XMLBuilder injection (moderate) doesn't apply here — only `XMLParser` is used, never `XMLBuilder` — and `postcss`'s high-severity issue is bundled inside Next.js itself, only resolved by a Next 16 major upgrade. Both are tracked, neither is silently ignored.
+- If you deploy behind a reverse proxy or load balancer, set `API_HOST`/`WEB_ORIGIN` to match, and terminate TLS in front of it — this project doesn't handle HTTPS itself.
 
 <br/>
 

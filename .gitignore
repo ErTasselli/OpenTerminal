@@ -10,3 +10,4 @@ out/
 
 # Database
 data/*.db*
+data/.api-key
