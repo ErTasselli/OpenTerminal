@@ -36,13 +36,13 @@ export default function MacroWidget() {
       <div className="h-24 px-1">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data.yields} margin={{ top: 4, right: 12, bottom: 0, left: -22 }}>
-            <XAxis dataKey="tenor" stroke="#808080" fontSize={9} />
-            <YAxis stroke="#808080" fontSize={9} domain={["auto", "auto"]} />
+            <XAxis dataKey="tenor" stroke="var(--text-dim)" fontSize={9} />
+            <YAxis stroke="var(--text-dim)" fontSize={9} domain={["auto", "auto"]} />
             <Tooltip
-              contentStyle={{ background: "#111", border: "1px solid #262626", fontSize: 10 }}
-              labelStyle={{ color: "#808080" }}
+              contentStyle={{ background: "var(--panel-2)", border: "1px solid var(--border)", fontSize: 10 }}
+              labelStyle={{ color: "var(--text-dim)" }}
             />
-            <Line type="monotone" dataKey="value" stroke="#ff9900" strokeWidth={1.5} dot={{ r: 2 }} />
+            <Line type="monotone" dataKey="value" stroke="var(--amber)" strokeWidth={1.5} dot={{ r: 2 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>

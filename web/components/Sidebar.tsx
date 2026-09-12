@@ -33,7 +33,7 @@ export default function Sidebar() {
         <button
           key={item.type}
           onClick={() => addWidget(item.type)}
-          className="text-left px-2 py-1.5 text-[11px] hover:bg-[#1a1a1a] hover:text-[var(--amber)] flex justify-between"
+          className="text-left px-2 py-1.5 text-[11px] hover:bg-[var(--hover)] hover:text-[var(--amber)] flex justify-between"
         >
           <span>{item.label}</span>
           <span className="dim text-[9px]">{item.key}</span>

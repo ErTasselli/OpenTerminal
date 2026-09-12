@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { useTheme, type Theme } from "../lib/theme";
 import { useTerminal } from "../store/terminal";
 
 type Status = {
@@ -40,6 +41,7 @@ function marketStateNY(): { label: string; open: boolean } {
 export default function TopBar() {
   const setCommandOpen = useTerminal((s) => s.setCommandOpen);
   const activeSymbol = useTerminal((s) => s.activeSymbol);
+  const [theme, setTheme] = useTheme();
   const { data: status } = useQuery({
     queryKey: ["status"],
     queryFn: () => apiGet<Status>("/api/status"),
@@ -63,6 +65,21 @@ export default function TopBar() {
       >
         {activeSymbol} — search symbol… <span className="float-right">⌘K</span>
       </button>
+      <select
+        className="term-btn"
+        title="Color theme"
+        value={theme}
+        onChange={(e) => setTheme(e.target.value as Theme)}
+      >
+        <option value="dark">DARK</option>
+        <option value="light">LIGHT</option>
+        <option value="dracula">DRACULA</option>
+        <option value="nord">NORD</option>
+        <option value="catppuccin">CATPPUCCIN MOCHA</option>
+        <option value="tokyo-night">TOKYO NIGHT</option>
+        <option value="gruvbox">GRUVBOX</option>
+        <option value="solarized-light">SOLARIZED LIGHT</option>
+      </select>
       <span className="dim ml-auto">
         feeds:{" "}
         {healthy.length > 0
