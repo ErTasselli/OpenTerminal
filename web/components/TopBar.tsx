@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
-import { useTheme } from "../lib/theme";
+import { useTheme, type Theme } from "../lib/theme";
 import { useTerminal } from "../store/terminal";
 
 type Status = {
@@ -65,13 +65,21 @@ export default function TopBar() {
       >
         {activeSymbol} — search symbol… <span className="float-right">⌘K</span>
       </button>
-      <button
+      <select
         className="term-btn"
-        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        title="Color theme"
+        value={theme}
+        onChange={(e) => setTheme(e.target.value as Theme)}
       >
-        {theme === "dark" ? "☾" : "☀"}
-      </button>
+        <option value="dark">DARK</option>
+        <option value="light">LIGHT</option>
+        <option value="dracula">DRACULA</option>
+        <option value="nord">NORD</option>
+        <option value="catppuccin">CATPPUCCIN MOCHA</option>
+        <option value="tokyo-night">TOKYO NIGHT</option>
+        <option value="gruvbox">GRUVBOX</option>
+        <option value="solarized-light">SOLARIZED LIGHT</option>
+      </select>
       <span className="dim ml-auto">
         feeds:{" "}
         {healthy.length > 0

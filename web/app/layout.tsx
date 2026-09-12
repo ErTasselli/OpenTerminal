@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 };
 
 // Set the theme before first paint to avoid a flash of the wrong theme.
-const themeInit = `try{document.documentElement.dataset.theme=localStorage.getItem("openterminal-theme")==="light"?"light":"dark"}catch(e){}`;
+const themeInit = `try{var t=localStorage.getItem("openterminal-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
