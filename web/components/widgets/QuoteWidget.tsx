@@ -59,7 +59,7 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
       <div className="dim text-[11px] mb-2 truncate">{data.name}</div>
       <div className="grid grid-cols-2 gap-x-4">
         {rows.map(([label, value]) => (
-          <div key={label} className="flex justify-between border-b border-[#161616] py-0.5">
+          <div key={label} className="flex justify-between border-b border-[var(--table-border)] py-0.5">
             <span className="dim">{label}</span>
             <span>{value}</span>
           </div>

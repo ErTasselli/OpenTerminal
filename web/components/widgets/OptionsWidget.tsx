@@ -72,19 +72,19 @@ export default function OptionsWidget({ widget }: { widget: WidgetInstance }) {
             const { call, put } = byStrike.get(strike)!;
             return (
               <tr key={strike}>
-                <td className={call?.inTheMoney ? "bg-[#0d2010]" : ""}>{fmt(call?.lastPrice)}</td>
-                <td className={call?.inTheMoney ? "bg-[#0d2010]" : ""}>{fmt(call?.bid)}</td>
-                <td className={call?.inTheMoney ? "bg-[#0d2010]" : ""}>{fmt(call?.ask)}</td>
-                <td className={call?.inTheMoney ? "bg-[#0d2010]" : ""}>{fmtBig(call?.volume)}</td>
-                <td className={call?.inTheMoney ? "bg-[#0d2010]" : ""}>
+                <td className={call?.inTheMoney ? "bg-[var(--itm-call)]" : ""}>{fmt(call?.lastPrice)}</td>
+                <td className={call?.inTheMoney ? "bg-[var(--itm-call)]" : ""}>{fmt(call?.bid)}</td>
+                <td className={call?.inTheMoney ? "bg-[var(--itm-call)]" : ""}>{fmt(call?.ask)}</td>
+                <td className={call?.inTheMoney ? "bg-[var(--itm-call)]" : ""}>{fmtBig(call?.volume)}</td>
+                <td className={call?.inTheMoney ? "bg-[var(--itm-call)]" : ""}>
                   {fmtBig(call?.openInterest)} · {call?.impliedVolatility ? fmt(call.impliedVolatility * 100, 0) + "%" : "—"}
                 </td>
                 <td className="!text-center font-bold amber">{fmt(strike)}</td>
-                <td className={put?.inTheMoney ? "bg-[#200d0d]" : ""}>{fmt(put?.lastPrice)}</td>
-                <td className={put?.inTheMoney ? "bg-[#200d0d]" : ""}>{fmt(put?.bid)}</td>
-                <td className={put?.inTheMoney ? "bg-[#200d0d]" : ""}>{fmt(put?.ask)}</td>
-                <td className={put?.inTheMoney ? "bg-[#200d0d]" : ""}>{fmtBig(put?.volume)}</td>
-                <td className={put?.inTheMoney ? "bg-[#200d0d]" : ""}>
+                <td className={put?.inTheMoney ? "bg-[var(--itm-put)]" : ""}>{fmt(put?.lastPrice)}</td>
+                <td className={put?.inTheMoney ? "bg-[var(--itm-put)]" : ""}>{fmt(put?.bid)}</td>
+                <td className={put?.inTheMoney ? "bg-[var(--itm-put)]" : ""}>{fmt(put?.ask)}</td>
+                <td className={put?.inTheMoney ? "bg-[var(--itm-put)]" : ""}>{fmtBig(put?.volume)}</td>
+                <td className={put?.inTheMoney ? "bg-[var(--itm-put)]" : ""}>
                   {fmtBig(put?.openInterest)} · {put?.impliedVolatility ? fmt(put.impliedVolatility * 100, 0) + "%" : "—"}
                 </td>
               </tr>

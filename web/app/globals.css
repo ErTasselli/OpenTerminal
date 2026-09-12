@@ -11,6 +11,37 @@
   --down: #ff3d3d;
   --text: #d9d9d9;
   --text-dim: #808080;
+  --hover: #1a1a1a;
+  --table-border: #161616;
+  --selected: #1f1a10;
+  --info: #4fc3f7;
+  --scrollbar: #333333;
+  --itm-call: #0d2010;
+  --itm-put: #200d0d;
+  --flash-neutral: rgba(255, 255, 255, 0.85);
+  --legend-bg: rgba(10, 10, 10, 0.7);
+}
+
+[data-theme="light"] {
+  --bg: #f4f4f2;
+  --panel: #ffffff;
+  --panel-2: #ececea;
+  --border: #d4d4d0;
+  --amber: #c96a00;
+  --amber-dim: #e8a04c;
+  --up: #1a8a3a;
+  --down: #d32f2f;
+  --text: #1f1f1f;
+  --text-dim: #6e6e6e;
+  --hover: #e8e8e4;
+  --table-border: #e4e4e0;
+  --selected: #fff3e0;
+  --info: #0277bd;
+  --scrollbar: #c0c0bc;
+  --itm-call: #d9f2e0;
+  --itm-put: #f9dede;
+  --flash-neutral: rgba(0, 0, 0, 0.12);
+  --legend-bg: rgba(255, 255, 255, 0.85);
 }
 
 html,
@@ -30,7 +61,7 @@ body {
   background: var(--panel);
 }
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: var(--scrollbar);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--amber-dim);
@@ -98,11 +129,11 @@ table.data-table td:first-child {
 table.data-table td {
   text-align: right;
   padding: 2px 6px;
-  border-bottom: 1px solid #161616;
+  border-bottom: 1px solid var(--table-border);
   white-space: nowrap;
 }
 table.data-table tbody tr:hover {
-  background: #1a1a1a;
+  background: var(--hover);
   cursor: pointer;
 }
 
@@ -111,7 +142,7 @@ table.data-table tbody tr:hover {
   animation: flash-white-anim 450ms ease-out;
 }
 @keyframes flash-white-anim {
-  0% { background-color: rgba(255, 255, 255, 0.85); }
+  0% { background-color: var(--flash-neutral); }
   100% { background-color: transparent; }
 }
 

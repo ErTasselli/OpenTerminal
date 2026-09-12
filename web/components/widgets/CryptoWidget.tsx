@@ -24,7 +24,7 @@ function Sparkline({ data }: { data: number[] }) {
   const upTrend = data[data.length - 1] >= data[0];
   return (
     <svg width={w} height={h}>
-      <polyline points={pts} fill="none" stroke={upTrend ? "#00c853" : "#ff3d3d"} strokeWidth={1} />
+      <polyline points={pts} fill="none" stroke={upTrend ? "var(--up)" : "var(--down)"} strokeWidth={1} />
     </svg>
   );
 }

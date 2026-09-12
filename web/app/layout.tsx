@@ -7,9 +7,15 @@ export const metadata: Metadata = {
   description: "Bloomberg-style financial terminal on free data sources",
 };
 
+// Set the theme before first paint to avoid a flash of the wrong theme.
+const themeInit = `try{document.documentElement.dataset.theme=localStorage.getItem("openterminal-theme")==="light"?"light":"dark"}catch(e){}`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
+      </head>
       <body>
         <Providers>{children}</Providers>
       </body>

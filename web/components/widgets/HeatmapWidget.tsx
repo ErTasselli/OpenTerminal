@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 import { apiGet } from "../../lib/api";
+import { useTheme, CHART_THEME } from "../../lib/theme";
 import { useTerminal } from "../../store/terminal";
 
 type Cell = { symbol: string; name: string | null; sector: string; marketCap: number | null; changePercent: number | null };
@@ -11,6 +12,7 @@ type Cell = { symbol: string; name: string | null; sector: string; marketCap: nu
 export default function HeatmapWidget() {
   const ref = useRef<HTMLDivElement>(null);
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
+  const [theme] = useTheme();
   const { data, error } = useQuery({
     queryKey: ["heatmap"],
     queryFn: () => apiGet<Cell[]>("/api/heatmap"),
@@ -20,6 +22,7 @@ export default function HeatmapWidget() {
   useEffect(() => {
     const el = ref.current;
     if (!el || !data) return;
+    const C = CHART_THEME[theme];
 
     const render = () => {
       const width = el.clientWidth;
@@ -45,8 +48,8 @@ export default function HeatmapWidget() {
       const color = (chg: number) => {
         const clamped = Math.max(-3, Math.min(3, chg));
         return clamped >= 0
-          ? d3.interpolateRgb("#1a1a1a", "#00c853")(clamped / 3)
-          : d3.interpolateRgb("#1a1a1a", "#ff3d3d")(-clamped / 3);
+          ? d3.interpolateRgb(C.grid, C.up)(clamped / 3)
+          : d3.interpolateRgb(C.grid, C.down)(-clamped / 3);
       };
 
       const svg = d3.select(el).append("svg").attr("width", width).attr("height", height);
@@ -75,7 +78,7 @@ export default function HeatmapWidget() {
         .attr("x", (d: any) => d.x0 + 3)
         .attr("y", (d: any) => d.y0 + 9)
         .attr("clip-path", (d: any) => `url(#${sectorClipId(d.data.name)})`)
-        .attr("fill", "#808080")
+        .attr("fill", "var(--text-dim)")
         .attr("font-size", 8)
         .text((d: any) => d.data.name.toUpperCase());
 
@@ -101,7 +104,7 @@ export default function HeatmapWidget() {
         .append("text")
         .attr("x", 3)
         .attr("y", 11)
-        .attr("fill", "#fff")
+        .attr("fill", C.label)
         .attr("font-size", 9)
         .attr("font-weight", "bold")
         .text((d: any) => d.data.data.symbol);
@@ -111,7 +114,7 @@ export default function HeatmapWidget() {
         .append("text")
         .attr("x", 3)
         .attr("y", 22)
-        .attr("fill", "#ddd")
+        .attr("fill", "var(--text)")
         .attr("font-size", 8)
         .text((d: any) => `${d.data.data.changePercent >= 0 ? "+" : ""}${d.data.data.changePercent.toFixed(2)}%`);
     };
@@ -120,7 +123,7 @@ export default function HeatmapWidget() {
     const obs = new ResizeObserver(render);
     obs.observe(el);
     return () => obs.disconnect();
-  }, [data, setActiveSymbol]);
+  }, [data, setActiveSymbol, theme]);
 
   if (error) return <div className="p-2 down">Error: {(error as Error).message}</div>;
   if (!data) return <div className="p-2 dim">Loading heatmap…</div>;

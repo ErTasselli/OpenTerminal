@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { useTheme } from "../lib/theme";
 import { useTerminal } from "../store/terminal";
 
 type Status = {
@@ -40,6 +41,7 @@ function marketStateNY(): { label: string; open: boolean } {
 export default function TopBar() {
   const setCommandOpen = useTerminal((s) => s.setCommandOpen);
   const activeSymbol = useTerminal((s) => s.activeSymbol);
+  const [theme, setTheme] = useTheme();
   const { data: status } = useQuery({
     queryKey: ["status"],
     queryFn: () => apiGet<Status>("/api/status"),
@@ -62,6 +64,13 @@ export default function TopBar() {
         onClick={() => setCommandOpen(true)}
       >
         {activeSymbol} — search symbol… <span className="float-right">⌘K</span>
+      </button>
+      <button
+        className="term-btn"
+        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      >
+        {theme === "dark" ? "☾" : "☀"}
       </button>
       <span className="dim ml-auto">
         feeds:{" "}

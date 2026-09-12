@@ -34,7 +34,7 @@ export default function NewsWidget({ widget }: { widget: WidgetInstance }) {
           href={n.link}
           target="_blank"
           rel="noreferrer"
-          className="block px-2 py-1 border-b border-[#161616] hover:bg-[#161616]"
+          className="block px-2 py-1 border-b border-[var(--table-border)] hover:bg-[var(--hover)]"
         >
           <div className="truncate">{n.title}</div>
           <div className="dim text-[10px]">
