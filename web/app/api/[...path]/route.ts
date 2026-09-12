@@ -14,6 +14,10 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
   if (apiKey) headers.set("x-api-key", apiKey);
+  // Relayed, not fabricated: only meaningful (and only trusted by the API)
+  // when TRUST_PROXY=1 is set there — see server/src/index.ts.
+  const forwardedFor = req.headers.get("x-forwarded-for");
+  if (forwardedFor) headers.set("x-forwarded-for", forwardedFor);
 
   const hasBody = req.method !== "GET" && req.method !== "HEAD" && req.method !== "DELETE";
 

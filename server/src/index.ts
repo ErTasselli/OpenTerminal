@@ -9,6 +9,18 @@ import { rateLimit } from "./rateLimit.js";
 
 const app = express();
 
+// Off by default: req.ip then falls back to the immediate socket address
+// (the bundled web proxy's own address when called through it), so every
+// caller behind that proxy shares one rate-limit bucket — safe, if coarser
+// than per-browser. Only set TRUST_PROXY=1 if you know exactly one trusted
+// reverse proxy sits in front of this process (the bundled web proxy alone,
+// or your own proxy in front of it that itself sets X-Forwarded-For from
+// the real client and doesn't let callers inject their own value) —
+// otherwise a caller can forge X-Forwarded-For to dodge the rate limit.
+if (process.env.TRUST_PROXY === "1") {
+  app.set("trust proxy", 1);
+}
+
 // Only the configured web origin may call this API from a browser. Without
 // this, any website open in the same browser as the terminal could reach a
 // server bound beyond localhost — cors() with no options reflects every
