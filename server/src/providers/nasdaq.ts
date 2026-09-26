@@ -37,18 +37,41 @@ const money = (s: unknown): number | null => {
   return isFinite(n) ? n : null;
 };
 
-function assetClassOf(symbol: string): "stocks" | "etf" {
-  // Heuristic: most well-known ETF tickers used across the app; falls back to "stocks".
-  const etfs = new Set([
-    "SPY", "DIA", "QQQ", "GLD", "USO", "UUP", "IWM", "VTI", "TLT",
-    // EU macro widget index proxies (see routes/market.ts EU_INDEX_PROXIES)
-    "FEZ", "IEUR", "EWG", "EWU", "EWQ", "EWI",
-  ]);
-  return etfs.has(symbol) ? "etf" : "stocks";
+// Nasdaq's quote/chart endpoints require the correct assetclass and return no
+// data for the wrong one (e.g. an ETF queried as "stocks"). Rather than guess,
+// we ask Nasdaq's symbol lookup, which reports the real asset type.
+const KNOWN_ETFS = new Set([
+  "SPY", "DIA", "QQQ", "GLD", "USO", "UUP", "IWM", "VTI", "TLT",
+  // EU macro widget index proxies (see routes/market.ts EU_INDEX_PROXIES)
+  "FEZ", "IEUR", "EWG", "EWU", "EWQ", "EWI",
+]);
+
+// Asset class is effectively static per symbol, so resolutions are memoized for
+// the process lifetime to avoid a lookup on every quote/history request.
+const assetClassCache = new Map<string, "stocks" | "etf">();
+
+async function resolveAssetClass(symbol: string): Promise<"stocks" | "etf"> {
+  const sym = symbol.toUpperCase();
+  const cached = assetClassCache.get(sym);
+  if (cached) return cached;
+  try {
+    const rows: any[] = await nfetch(
+      `https://api.nasdaq.com/api/autocomplete/slookup/10?search=${encodeURIComponent(symbol)}&limit=10`
+    );
+    const match = rows.find((r) => String(r.symbol).toUpperCase() === sym);
+    if (match) {
+      const assetclass = String(match.asset).toUpperCase() === "ETF" ? "etf" : "stocks";
+      assetClassCache.set(sym, assetclass);
+      return assetclass;
+    }
+  } catch {
+    // Lookup unavailable — fall through to the static hint below.
+  }
+  return KNOWN_ETFS.has(sym) ? "etf" : "stocks";
 }
 
 export async function quote(symbol: string): Promise<Quote> {
-  const assetclass = assetClassOf(symbol);
+  const assetclass = await resolveAssetClass(symbol);
   const [info, summary] = await Promise.all([
     nfetch(`https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/info?assetclass=${assetclass}`),
     nfetch(`https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/summary?assetclass=${assetclass}`).catch(() => null),
@@ -110,7 +133,7 @@ export async function history(symbol: string, rangeKey: string): Promise<Candle[
   const days = RANGE_DAYS[rangeKey] ?? 190;
   const to = new Date();
   const from = new Date(to.getTime() - days * 86_400_000);
-  const assetclass = assetClassOf(symbol);
+  const assetclass = await resolveAssetClass(symbol);
   const data = await nfetch(
     `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/chart?assetclass=${assetclass}&fromdate=${fmtDate(from)}&todate=${fmtDate(to)}`
   );
