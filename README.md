@@ -135,6 +135,11 @@ npm run dev
 
 Without a key, everything else still works — the AI widget just shows a friendly "unavailable" message instead of failing.
 
+Two optional knobs for the assistant, both standard for the Anthropic SDK:
+
+- `ANTHROPIC_BASE_URL` — point the assistant at an Anthropic-compatible endpoint (a self-hosted gateway, an EU-hosted relay, etc.) instead of api.anthropic.com.
+- `ANTHROPIC_MODEL` — override the model sent in requests (default: `claude-opus-4-8`). Required when the endpoint behind `ANTHROPIC_BASE_URL` serves models under different ids.
+
 ### Security defaults
 
 - The API binds to `127.0.0.1` and only accepts browser requests from `http://localhost:3000` by default — nothing else on your network can reach it out of the box.
