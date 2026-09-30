@@ -1,5 +1,25 @@
-const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+// A single hardcoded User-Agent makes every self-hosted install share one
+// fingerprint: when the app's traffic grows, providers can throttle the whole
+// fleet by blocking that one string (observed: sustained HTTP 429 from Yahoo
+// for the previous fixed UA, while other realistic UAs on the same IP worked).
+// So pick one UA per server process from a small pool of plausible, current,
+// OS/browser-diverse strings — sticky for the process lifetime so our cookie/
+// crumb session stays consistent — and let operators pin their own explicitly.
+const UA_POOL = [
+  "Mozilla/5.0 (X11; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0",
+];
+
+function selectUserAgent(): string {
+  const pinned = process.env.YAHOO_USER_AGENT?.trim();
+  if (pinned) return pinned;
+  return UA_POOL[Math.floor(Math.random() * UA_POOL.length)];
+}
+
+const UA = selectUserAgent();
 
 export type Quote = {
   symbol: string;

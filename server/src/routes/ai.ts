@@ -27,7 +27,7 @@ aiRouter.post("/chat", async (req, res) => {
       ? [{ role: "user" as const, content: `Current terminal context (JSON):\n${JSON.stringify(context)}` }]
       : [];
     const response = await getClient().messages.create({
-      model: "claude-opus-4-8",
+      model: process.env.ANTHROPIC_MODEL ?? "claude-opus-4-8",
       max_tokens: 16000,
       thinking: { type: "adaptive" },
       system: SYSTEM,
