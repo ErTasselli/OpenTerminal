@@ -1,0 +1,128 @@
+name: Create and publish Docker images on release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  BE_IMAGE_NAME: ${{ github.repository }}-backend
+  FE_IMAGE_NAME: ${{ github.repository }}-frontend
+
+jobs:
+  build-push-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.0
+        with:
+          cosign-release: 'v2.2.4'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # BACKEND image
+      - name: Extract metadata for Backend Docker image
+        id: meta-be
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BE_IMAGE_NAME }}
+          tags: |
+            latest
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      - name: Extract image name from Backend metadata
+        id: image-be
+        run: |
+          FIRST_TAG=$(echo "${{ steps.meta-be.outputs.tags }}" | head -n1)
+          echo "IMAGE_NAME=${FIRST_TAG%:*}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Backend image
+        id: push-be
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: server/Dockerfile
+          platforms: linux/amd64,linux/arm/v7,linux/arm64
+          tags: ${{ steps.meta-be.outputs.tags }}
+          labels: ${{ steps.meta-be.outputs.labels }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign the published Backend image
+        env:
+          TAGS: ${{ steps.meta-be.outputs.tags }}
+          DIGEST: ${{ steps.push-be.outputs.digest }}
+        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+
+      - name: Generate artifact attestation for Backend image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.image-be.outputs.IMAGE_NAME }}
+          subject-digest: ${{ steps.push-be.outputs.digest }}
+          push-to-registry: true
+
+      # FRONTEND image
+      - name: Extract metadata for Frontend Docker image
+        id: meta-fe
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.FE_IMAGE_NAME }}
+          tags: |
+            latest
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      - name: Extract image name from Frontend metadata
+        id: image-fe
+        run: |
+          FIRST_TAG=$(echo "${{ steps.meta-fe.outputs.tags }}" | head -n1)
+          echo "IMAGE_NAME=${FIRST_TAG%:*}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Frontend image
+        id: push-fe
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: web/Dockerfile
+          platforms: linux/amd64,linux/arm/v7,linux/arm64
+          tags: ${{ steps.meta-fe.outputs.tags }}
+          labels: ${{ steps.meta-fe.outputs.labels }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign the published Frontend image
+        env:
+          TAGS: ${{ steps.meta-fe.outputs.tags }}
+          DIGEST: ${{ steps.push-fe.outputs.digest }}
+        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+
+      - name: Generate artifact attestation for Frontend image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.image-fe.outputs.IMAGE_NAME }}
+          subject-digest: ${{ steps.push-fe.outputs.digest }}
+          push-to-registry: true

@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+    # image: ghcr.io/ertasselli/openterminal-backend:latest
+
     # Bound to localhost by default: only this machine can reach the API.
     # To expose it on your network/internet, bind wider here AND set API_KEY
     # below explicitly (otherwise a fresh key is generated per container).
@@ -26,6 +28,7 @@ services:
     build:
       context: .
       dockerfile: web/Dockerfile
+    # image: ghcr.io/ertasselli/openterminal-frontend:latest
     ports:
       - "127.0.0.1:3000:3000"
     environment:
