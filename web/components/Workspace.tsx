@@ -20,6 +20,7 @@ import CalendarWidget from "./widgets/CalendarWidget";
 import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
+import WidgetErrorBoundary from "./WidgetErrorBoundary";
 
 const Grid = WidthProvider(GridLayout);
 
@@ -145,7 +146,9 @@ export default function Workspace() {
               </span>
             </div>
             <div className="flex-1 overflow-auto min-h-0">
-              <WidgetBody widget={w} />
+              <WidgetErrorBoundary name={TITLES[w.type]}>
+                <WidgetBody widget={w} />
+              </WidgetErrorBoundary>
             </div>
           </div>
         </div>
