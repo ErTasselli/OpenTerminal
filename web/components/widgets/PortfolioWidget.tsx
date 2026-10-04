@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiGet, apiPost, apiDelete, fmt, pctClass, type Quote } from "../../lib/api";
+import { symbolsParam } from "../../lib/symbol";
 
 type Portfolio = { id: number; name: string };
 type Position = { symbol: string; quantity: number; avgCost: number; realizedPnl: number };
@@ -35,7 +36,7 @@ export default function PortfolioWidget() {
   const symbols = positions.map((p) => p.symbol);
   const { data: quotes = [] } = useQuery({
     queryKey: ["pf-quotes", symbols.join(",")],
-    queryFn: () => apiGet<Quote[]>(`/api/quotes?symbols=${symbols.join(",")}`),
+    queryFn: () => apiGet<Quote[]>(`/api/quotes?symbols=${symbolsParam(symbols)}`),
     enabled: symbols.length > 0,
     refetchInterval: 30_000,
   });
