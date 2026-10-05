@@ -30,27 +30,58 @@ function num(v: unknown): number | null {
   return typeof v === "number" && isFinite(v) ? v : null;
 }
 
+// Header-safe key: printable ASCII, no spaces. Anything else is refused before the
+// request so a runtime header error (whose message can quote the value) never happens.
+const KEY_PATTERN = /^[!-~]+$/;
+
+function headers(): Record<string, string> {
+  const key = apiKey();
+  if (key !== null && !KEY_PATTERN.test(key)) throw new Error("fxmacrodata key has characters not allowed in a header");
+  return key ? { "X-API-Key": key, Accept: "application/json" } : { Accept: "application/json" };
+}
+
+async function getJson(url: string, label: string): Promise<unknown> {
+  let res: Response;
+  try {
+    // redirect: "manual" keeps the key on api.fxmacrodata.com; fetch would otherwise
+    // re-send X-API-Key to wherever a redirect points.
+    res = await fetch(url, { headers: headers(), redirect: "manual" });
+  } catch (err) {
+    throw new Error(`fxmacrodata request failed for ${label} (${err instanceof Error ? err.name : "error"})`);
+  }
+  if (res.status !== 200) throw new Error(`fxmacrodata ${res.status} for ${label}`);
+  try {
+    return await res.json();
+  } catch {
+    throw new Error(`fxmacrodata returned non-JSON for ${label}`);
+  }
+}
+
+function toRelease(row: RawRow): Release | null {
+  const value = num(row?.latest?.val);
+  const announced = num(row?.latest?.announcement_datetime);
+  if (typeof row?.indicator !== "string" || value === null || announced === null) return null;
+  return {
+    indicator: row.indicator,
+    unit: typeof row.unit === "string" ? row.unit : null,
+    value,
+    previous: num(row.previous?.val),
+    announcedAt: announced * 1000,
+  };
+}
+
 /** Latest release of every indicator for a currency, keyed by indicator slug. */
 export async function latestReleases(currency: string): Promise<Map<string, Release>> {
-  const key = apiKey();
-  const res = await fetch(`${BASE_URL}/announcements/${currency.toLowerCase()}/latest`, {
-    headers: key ? { "X-API-Key": key, Accept: "application/json" } : { Accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`fxmacrodata ${res.status} for ${currency.toUpperCase()}`);
-  const body = (await res.json()) as { data?: RawRow[] };
+  const label = currency.toUpperCase();
+  if (!/^[A-Z]{3}$/.test(label)) throw new Error(`fxmacrodata: not a currency code: ${label}`);
+  const body = await getJson(`${BASE_URL}/announcements/${label.toLowerCase()}/latest`, label);
+  const rows = (body as { data?: unknown } | null)?.data;
+  if (!Array.isArray(rows)) throw new Error(`fxmacrodata returned an unexpected body for ${label}`);
 
   const out = new Map<string, Release>();
-  for (const row of body.data ?? []) {
-    const value = num(row.latest?.val);
-    const announced = num(row.latest?.announcement_datetime);
-    if (typeof row.indicator !== "string" || value === null || announced === null) continue;
-    out.set(row.indicator, {
-      indicator: row.indicator,
-      unit: typeof row.unit === "string" ? row.unit : null,
-      value,
-      previous: num(row.previous?.val),
-      announcedAt: announced * 1000,
-    });
+  for (const row of rows as RawRow[]) {
+    const release = toRelease(row);
+    if (release) out.set(release.indicator, release);
   }
   return out;
 }

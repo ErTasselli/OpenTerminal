@@ -40,6 +40,7 @@ describe("fxmacrodata provider", () => {
     const out = await latestReleases("usd");
     expect(fetchMock).toHaveBeenCalledWith("https://api.fxmacrodata.com/v1/announcements/usd/latest", {
       headers: { Accept: "application/json" },
+      redirect: "manual",
     });
     expect([...out.keys()]).toEqual(["inflation"]);
     expect(out.get("inflation")).toEqual({
@@ -62,6 +63,47 @@ describe("fxmacrodata provider", () => {
   it("throws with the currency on a non-OK response", async () => {
     mockFetchOnce({}, false, 401);
     await expect(latestReleases("gbp")).rejects.toThrow("fxmacrodata 401 for GBP");
+  });
+
+  it("does not follow redirects, so the key never leaves api.fxmacrodata.com", async () => {
+    vi.stubEnv("FXMACRODATA_API_KEY", "secret-key-123");
+    const fetchMock = mockFetchOnce({}, false, 302);
+    await expect(latestReleases("usd")).rejects.toThrow("fxmacrodata 302 for USD");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe("manual");
+  });
+
+  it("trims the key and never puts it in an error message", async () => {
+    vi.stubEnv("FXMACRODATA_API_KEY", "  secret-key-123 ");
+    const fetchMock = mockFetchOnce({ data: [] });
+    await latestReleases("usd");
+    expect(fetchMock.mock.calls[0][1].headers["X-API-Key"]).toBe("secret-key-123");
+
+    vi.stubEnv("FXMACRODATA_API_KEY", "secret-key-123\nInjected: 1");
+    const refused = mockFetchOnce({ data: [] });
+    const error = await latestReleases("usd").catch((e: Error) => e);
+    expect(refused).not.toHaveBeenCalled();
+    expect(String(error)).not.toContain("secret-key-123");
+
+    vi.stubEnv("FXMACRODATA_API_KEY", "secret-key-123");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("bad header value secret-key-123")));
+    const failed = await latestReleases("usd").catch((e: Error) => e);
+    expect(String(failed)).toBe("Error: fxmacrodata request failed for USD (TypeError)");
+  });
+
+  it("rejects bodies that are not the documented shape", async () => {
+    for (const body of [{ detail: "upstream failure" }, { data: "rows" }, null, [1, 2]]) {
+      mockFetchOnce(body);
+      await expect(latestReleases("usd")).rejects.toThrow("fxmacrodata returned an unexpected body for USD");
+    }
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 200, ok: true, json: async () => JSON.parse("<html>") }));
+    await expect(latestReleases("usd")).rejects.toThrow("fxmacrodata returned non-JSON for USD");
+  });
+
+  it("only queries three-letter currency codes", async () => {
+    const fetchMock = mockFetchOnce({ data: [] });
+    await expect(latestReleases("usd/../x")).rejects.toThrow("not a currency code");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("only queries non-USD currencies when a key is set", () => {
