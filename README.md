@@ -104,7 +104,7 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | Crypto candles | Binance public API (klines) | — |
 | Macro (Treasury yields, VIX) | FRED (Federal Reserve) | — |
 | Economic calendar (schedule, forecast, previous) | Forex Factory public feed | — |
-| Economic calendar (actual — Fed / ECB / CPI / NFP only) | FRED (Federal Reserve) | — |
+| Economic calendar (actual: central bank rates, CPI, unemployment, NFP, jobless claims) | FXMacroData (USD with no key; other currencies with an optional key) | FRED (Federal Reserve, Fed / ECB / CPI / NFP) |
 | Earnings calendar (next/last date, EPS estimate) | TradingView scanner API | — |
 | Earnings history (forecast vs. actual, surprise %) | Nasdaq earnings‑surprise API | — |
 
@@ -134,6 +134,17 @@ npm run dev
 ```
 
 Without a key, everything else still works — the AI widget just shows a friendly "unavailable" message instead of failing.
+
+### Optional: calendar actuals beyond the US
+
+The calendar fills in the released value for US events out of the box from [FXMacroData](https://fxmacrodata.com/?utm_source=github&utm_medium=referral&utm_campaign=OpenTerminal&utm_content=readme)'s free tier. With an [FXMacroData API key](https://fxmacrodata.com/subscribe?utm_source=github&utm_medium=referral&utm_campaign=OpenTerminal&utm_content=readme) it also fills them in for EUR, GBP, JPY, AUD, NZD, CAD and CHF releases (rate decisions, CPI, unemployment):
+
+```bash
+export FXMACRODATA_API_KEY=...
+npm run dev
+```
+
+Without a key, non-US events keep the FRED-backed actuals they have today.
 
 Two optional knobs for the assistant, both standard for the Anthropic SDK:
 

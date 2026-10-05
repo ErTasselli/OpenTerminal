@@ -1,9 +1,11 @@
 // Economic calendar — schedule, consensus forecast and previous reading come from
 // Forex Factory's free public JSON feed (no key, no signup). That feed never carries
-// the released "actual" value, so for a curated set of the highest-visibility US/EU
-// releases (Fed, ECB, CPI, NFP) we backfill "actual" from FRED once the real number
-// is out — FRED IS where those official releases end up, usually within a day or two.
+// the released "actual" value, so for a curated set of the highest-visibility
+// releases (central bank rates, CPI, unemployment, NFP) we backfill "actual" from
+// FXMacroData, which carries the official print with its announcement time, and fall
+// back to FRED for the US/EU releases it mirrors, usually within a day or two.
 import * as fred from "./fred.js";
+import * as fxmd from "./fxmacrodata.js";
 
 export type EconEvent = {
   title: string;
@@ -50,6 +52,89 @@ const FRED_MATCHERS: Matcher[] = [
   { test: (t, c) => c === "USD" && /^cpi m\/m$/i.test(t), seriesId: "CPIAUCSL", kind: "mom_pct", cadence: "monthly" },
 ];
 
+// Forex Factory title -> FXMacroData indicator. Each match is only trusted when the
+// release FXMacroData has on file was announced within RELEASE_WINDOW_MS of the event,
+// so last month's print never shows up as this month's actual, and when its unit is
+// the one the event reports (a "y/y" event never picks up a level or an m/m series).
+type FxmdMatcher = {
+  test: (title: string, country: string) => boolean;
+  indicator: string;
+  unit: string;
+  kind: "rate" | "pct" | "thousands" | "payrolls";
+};
+
+const FXMD_MATCHERS: FxmdMatcher[] = [
+  { test: (t, c) => c === "USD" && /^federal funds rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "EUR" && /^main refinancing rate$/i.test(t), indicator: "policy_rate_mro", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "EUR" && /^deposit facility rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "GBP" && /^official bank rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "JPY" && /^boj policy rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "AUD" && /^cash rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "NZD" && /^official cash rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "CAD" && /^overnight rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t, c) => c === "CHF" && /^snb policy rate$/i.test(t), indicator: "policy_rate", unit: "%", kind: "rate" },
+  { test: (t) => /^(final |flash )?cpi( flash estimate)? y\/y$/i.test(t), indicator: "inflation", unit: "%YoY", kind: "pct" },
+  { test: (t, c) => c === "USD" && /^cpi m\/m$/i.test(t), indicator: "inflation_mom", unit: "%MoM", kind: "pct" },
+  { test: (t, c) => c === "USD" && /^core cpi y\/y$/i.test(t), indicator: "core_inflation", unit: "%YoY", kind: "pct" },
+  { test: (t, c) => c === "USD" && /^core cpi m\/m$/i.test(t), indicator: "core_inflation_mom", unit: "%MoM", kind: "pct" },
+  {
+    test: (t, c) => ["USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD"].includes(c) && /^unemployment rate$/i.test(t),
+    indicator: "unemployment",
+    unit: "%",
+    kind: "pct",
+  },
+  { test: (t, c) => c === "USD" && /^non-?farm employment change$/i.test(t), indicator: "non_farm_payrolls", unit: "Persons", kind: "payrolls" },
+  { test: (t, c) => c === "USD" && /^unemployment claims$/i.test(t), indicator: "initial_jobless_claims", unit: "Persons", kind: "thousands" },
+];
+
+// Forex Factory times are scheduled times; a release can land a little early or late,
+// and some publishers only give a date. A day either side still rules out the previous
+// monthly print, which is weeks away.
+const RELEASE_WINDOW_MS = 36 * 3_600_000;
+
+function fxmdMatcher(title: string, country: string): FxmdMatcher | undefined {
+  return FXMD_MATCHERS.find((m) => m.test(title, country));
+}
+
+export function fxmdActual(
+  title: string,
+  country: string,
+  eventDate: Date,
+  releases: Map<string, fxmd.Release> | undefined
+): string | null {
+  const matcher = fxmdMatcher(title, country);
+  const release = matcher && releases?.get(matcher.indicator);
+  if (!matcher || !release || release.unit !== matcher.unit) return null;
+  if (Math.abs(release.announcedAt - eventDate.getTime()) > RELEASE_WINDOW_MS) return null;
+
+  if (matcher.kind === "rate") return `${release.value.toFixed(2)}%`;
+  if (matcher.kind === "pct") return `${release.value.toFixed(1)}%`;
+  if (matcher.kind === "thousands") return `${Math.round(release.value / 1000)}K`;
+  // Payrolls are published as a level (persons); the calendar shows the monthly change.
+  return release.previous === null ? null : `${Math.round((release.value - release.previous) / 1000)}K`;
+}
+
+/** One FXMacroData call per currency that has a matched release already behind us. */
+async function fxmdReleases(raw: FFRaw[]): Promise<Map<string, Map<string, fxmd.Release>>> {
+  const now = Date.now();
+  const currencies = new Set(
+    raw
+      .filter((e) => new Date(e.date).getTime() <= now && fxmdMatcher(e.title, e.country) && fxmd.supports(e.country))
+      .map((e) => e.country)
+  );
+  const out = new Map<string, Map<string, fxmd.Release>>();
+  await Promise.all(
+    [...currencies].map(async (c) => {
+      try {
+        out.set(c, await fxmd.latestReleases(c));
+      } catch {
+        // No actuals from FXMacroData for this currency on this refresh; FRED still runs.
+      }
+    })
+  );
+  return out;
+}
+
 function sameMonth(a: Date, b: Date): boolean {
   return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth();
 }
@@ -95,6 +180,7 @@ export async function weeklyEvents(): Promise<EconEvent[]> {
   // Forex Factory's export only exists as a "this week" snapshot (Mon–Sun) — there's
   // no "next week" file to extend the window with.
   const raw = await fetchWeek("thisweek");
+  const releases = await fxmdReleases(raw);
 
   const events = await Promise.all(
     raw.map(async (e): Promise<EconEvent> => {
@@ -106,7 +192,9 @@ export async function weeklyEvents(): Promise<EconEvent[]> {
         impact: (e.impact as EconEvent["impact"]) ?? "Low",
         forecast: e.forecast || null,
         previous: e.previous || null,
-        actual: await actualFor(e.title, e.country, date),
+        actual:
+          (date.getTime() <= Date.now() ? fxmdActual(e.title, e.country, date, releases.get(e.country)) : null) ??
+          (await actualFor(e.title, e.country, date)),
       };
     })
   );
