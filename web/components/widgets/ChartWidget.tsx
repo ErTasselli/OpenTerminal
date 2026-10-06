@@ -43,7 +43,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
 
   const { data: candles, error } = useQuery({
     queryKey: ["history", symbol, range],
-    queryFn: () => apiGet<Candle[]>(`/api/history/${symbol}?range=${range}`),
+    queryFn: () => apiGet<Candle[]>(`/api/history/${encodeURIComponent(symbol)}?range=${range}`),
     refetchInterval: range === "1D" ? 8_000 : 60_000,
   });
 

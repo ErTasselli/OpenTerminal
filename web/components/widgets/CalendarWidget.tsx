@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useMemo, useState } from "react";
 import { apiGet, fmt, pctClass } from "../../lib/api";
+import { symbolsParam } from "../../lib/symbol";
 import { useTerminal } from "../../store/terminal";
 
 type EconEvent = {
@@ -142,7 +143,7 @@ function surpriseClass(row: EarningsHistoryRow): string {
 function EarningsHistoryRows({ symbol }: { symbol: string }) {
   const { data = [], isLoading, error } = useQuery({
     queryKey: ["earnings-history", symbol],
-    queryFn: () => apiGet<EarningsHistoryRow[]>(`/api/earnings-history/${symbol}`),
+    queryFn: () => apiGet<EarningsHistoryRow[]>(`/api/earnings-history/${encodeURIComponent(symbol)}`),
     staleTime: 3_600_000,
   });
 
@@ -186,7 +187,7 @@ function EarningsTab() {
 
   const { data = [], isLoading, error } = useQuery({
     queryKey: ["calendar", watchlist],
-    queryFn: () => apiGet<EarningsEntry[]>(`/api/calendar?symbols=${watchlist.join(",")}`),
+    queryFn: () => apiGet<EarningsEntry[]>(`/api/calendar?symbols=${symbolsParam(watchlist)}`),
     enabled: watchlist.length > 0,
     staleTime: 3_600_000,
   });

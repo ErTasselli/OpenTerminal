@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import GridLayout, { WidthProvider } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+import { normalizeSymbol } from "../lib/symbol";
 import { useTerminal, type WidgetInstance } from "../store/terminal";
 import QuoteWidget from "./widgets/QuoteWidget";
 import ChartWidget from "./widgets/ChartWidget";
@@ -65,7 +66,7 @@ function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSym
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
-            const v = draft.trim();
+            const v = normalizeSymbol(draft);
             if (v) setWidgetSymbol(widget.id, v);
             setEditing(false);
           }
