@@ -8,8 +8,22 @@ import { useTerminal } from "../../store/terminal";
 
 type Cell = { symbol: string; name: string | null; sector: string; marketCap: number | null; changePercent: number | null };
 
+// Market cap is derived from the live price, so sizing tiles from each 3s poll
+// re-ran the treemap and every tile edge jumped around (#12). Tile sizes and
+// membership are frozen in a snapshot that polls only recolor; the layout is
+// re-taken on market switch or once the snapshot is this old.
+const LAYOUT_TTL_MS = 5 * 60_000;
+
+type LayoutSnapshot = {
+  market: "us" | "eu";
+  takenAt: number;
+  caps: Map<string, number>; // symbol -> market cap used for tile size
+  cells: Map<string, Cell>; // symbol -> latest data seen for that tile
+};
+
 export default function HeatmapWidget() {
   const ref = useRef<HTMLDivElement>(null);
+  const snapshotRef = useRef<LayoutSnapshot | null>(null);
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
   const [market, setMarket] = useState<"us" | "eu">("us");
   const { data, error } = useQuery({
@@ -22,23 +36,40 @@ export default function HeatmapWidget() {
     const el = ref.current;
     if (!el || !data) return;
 
+    let snapshot = snapshotRef.current;
+    if (!snapshot || snapshot.market !== market || Date.now() - snapshot.takenAt > LAYOUT_TTL_MS) {
+      const valid = data.filter((d) => d.marketCap && d.changePercent !== null);
+      snapshot = snapshotRef.current = {
+        market,
+        takenAt: Date.now(),
+        caps: new Map(valid.map((d) => [d.symbol, d.marketCap!])),
+        cells: new Map(),
+      };
+    }
+    // Symbols that drop out of a poll keep their last-known cell instead of
+    // vanishing; symbols new to the top 150 wait for the next snapshot.
+    for (const d of data) {
+      if (snapshot.caps.has(d.symbol) && d.changePercent !== null) snapshot.cells.set(d.symbol, d);
+    }
+    const cells = [...snapshot.cells.values()];
+    const caps = snapshot.caps;
+
     const render = () => {
       const width = el.clientWidth;
       const height = el.clientHeight;
       if (width === 0 || height === 0) return;
       el.innerHTML = "";
 
-      const valid = data.filter((d) => d.marketCap && d.changePercent !== null);
       type Node = { name: string; children?: Node[]; data?: Cell };
       const root = d3
         .hierarchy<Node>({
           name: "root",
-          children: [...d3.group(valid, (d) => d.sector)].map(([sector, items]) => ({
+          children: [...d3.group(cells, (d) => d.sector)].map(([sector, items]) => ({
             name: sector,
             children: items.map((d) => ({ name: d.symbol, data: d })),
           })),
         })
-        .sum((d) => d.data?.marketCap ?? 0)
+        .sum((d) => (d.data ? caps.get(d.data.symbol) ?? 0 : 0))
         .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
 
       d3.treemap<Node>().size([width, height]).paddingInner(1).paddingTop(12)(root);
@@ -121,7 +152,7 @@ export default function HeatmapWidget() {
     const obs = new ResizeObserver(render);
     obs.observe(el);
     return () => obs.disconnect();
-  }, [data, setActiveSymbol]);
+  }, [data, market, setActiveSymbol]);
 
   return (
     <div className="flex flex-col h-full">
