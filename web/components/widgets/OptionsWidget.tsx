@@ -20,7 +20,7 @@ export default function OptionsWidget({ widget }: { widget: WidgetInstance }) {
 
   const { data, error, isLoading } = useQuery({
     queryKey: ["options", symbol, expiry],
-    queryFn: () => apiGet<Chain>(`/api/options/${symbol}${expiry ? `?expiry=${encodeURIComponent(expiry)}` : ""}`),
+    queryFn: () => apiGet<Chain>(`/api/options/${encodeURIComponent(symbol)}${expiry ? `?expiry=${encodeURIComponent(expiry)}` : ""}`),
     refetchInterval: 20_000,
     retry: 0,
   });

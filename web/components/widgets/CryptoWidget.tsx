@@ -6,11 +6,17 @@ import Flash from "../Flash";
 import { useTerminal } from "../../store/terminal";
 
 type CryptoRow = {
-  id: string; symbol: string; name: string; price: number;
+  id: string; symbol: string; name: string; price: number | null;
   changePercent24h: number | null; marketCap: number | null; volume24h: number | null;
   rank: number | null; sparkline: number[];
 };
 type GlobalStats = { totalMarketCap: number; btcDominance: number; ethDominance: number };
+
+// Feeds can report a null/NaN price for newly-listed or delisted assets.
+function fmtPrice(p: number | null): string {
+  if (p === null || !isFinite(p)) return "—";
+  return p >= 1 ? fmt(p) : p.toPrecision(4);
+}
 
 function Sparkline({ data }: { data: number[] }) {
   if (data.length < 2) return null;
@@ -62,7 +68,7 @@ export default function CryptoWidget() {
             <tr key={c.id} onClick={() => setActiveSymbol(c.symbol)}>
               <td className="dim">{c.rank ?? "—"}</td>
               <td className="!text-left"><span className="font-bold">{c.symbol}</span> <span className="dim">{c.name}</span></td>
-              <td><Flash value={c.price}>{c.price >= 1 ? fmt(c.price) : c.price.toPrecision(4)}</Flash></td>
+              <td><Flash value={c.price}>{fmtPrice(c.price)}</Flash></td>
               <td className={pctClass(c.changePercent24h)}>
                 <Flash value={c.changePercent24h}>{fmt(c.changePercent24h)}%</Flash>
               </td>

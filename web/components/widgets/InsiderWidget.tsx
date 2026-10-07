@@ -36,7 +36,7 @@ export default function InsiderWidget({ widget }: { widget: WidgetInstance }) {
   const symbol = useWidgetSymbol(widget);
   const { data = [], isLoading, error } = useQuery({
     queryKey: ["insider", symbol],
-    queryFn: () => apiGet<InsiderTransaction[]>(`/api/insider/${symbol}`),
+    queryFn: () => apiGet<InsiderTransaction[]>(`/api/insider/${encodeURIComponent(symbol)}`),
     staleTime: 3_600_000,
   });
 

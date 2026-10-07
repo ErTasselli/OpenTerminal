@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import GridLayout, { WidthProvider } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+import { normalizeSymbol } from "../lib/symbol";
 import { useTerminal, type WidgetInstance } from "../store/terminal";
 import QuoteWidget from "./widgets/QuoteWidget";
 import ChartWidget from "./widgets/ChartWidget";
@@ -20,6 +21,7 @@ import CalendarWidget from "./widgets/CalendarWidget";
 import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
+import WidgetErrorBoundary from "./WidgetErrorBoundary";
 
 const Grid = WidthProvider(GridLayout);
 
@@ -65,7 +67,7 @@ function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSym
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
-            const v = draft.trim();
+            const v = normalizeSymbol(draft);
             if (v) setWidgetSymbol(widget.id, v);
             setEditing(false);
           }
@@ -145,7 +147,9 @@ export default function Workspace() {
               </span>
             </div>
             <div className="flex-1 overflow-auto min-h-0">
-              <WidgetBody widget={w} />
+              <WidgetErrorBoundary name={TITLES[w.type]}>
+                <WidgetBody widget={w} />
+              </WidgetErrorBoundary>
             </div>
           </div>
         </div>

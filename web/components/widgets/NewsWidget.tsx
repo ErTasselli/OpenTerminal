@@ -14,7 +14,7 @@ export default function NewsWidget({ widget }: { widget: WidgetInstance }) {
 
   const { data = [], isLoading } = useQuery({
     queryKey: ["news", mode, symbol],
-    queryFn: () => apiGet<NewsItem[]>(mode === "symbol" ? `/api/news?symbol=${symbol}` : "/api/news"),
+    queryFn: () => apiGet<NewsItem[]>(mode === "symbol" ? `/api/news?symbol=${encodeURIComponent(symbol)}` : "/api/news"),
     refetchInterval: 30_000,
   });
 

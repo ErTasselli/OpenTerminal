@@ -17,7 +17,7 @@ export default function AiWidget() {
     mutationFn: async (userText: string) => {
       let context: unknown = null;
       try {
-        context = { activeSymbol, quote: (await apiGet<Quote[]>(`/api/quotes?symbols=${activeSymbol}`))[0] };
+        context = { activeSymbol, quote: (await apiGet<Quote[]>(`/api/quotes?symbols=${encodeURIComponent(activeSymbol)}`))[0] };
       } catch {
         // context is best-effort
       }

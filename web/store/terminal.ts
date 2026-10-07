@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { normalizeSymbol } from "../lib/symbol";
 
 export type WidgetType =
   | "quote"
@@ -89,7 +90,10 @@ export const useTerminal = create<TerminalState>()(
       layout: DEFAULT_LAYOUT,
       watchlist: ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"],
       commandOpen: false,
-      setActiveSymbol: (s) => set({ activeSymbol: s.toUpperCase() }),
+      setActiveSymbol: (s) => {
+        const sym = normalizeSymbol(s);
+        if (sym) set({ activeSymbol: sym });
+      },
       setCommandOpen: (open) => set({ commandOpen: open }),
       addWidget: (type, symbol) =>
         set((st) => {
@@ -106,19 +110,25 @@ export const useTerminal = create<TerminalState>()(
           widgets: st.widgets.filter((w) => w.id !== id),
           layout: st.layout.filter((l) => l.i !== id),
         })),
-      setWidgetSymbol: (id, symbol) =>
+      setWidgetSymbol: (id, symbol) => {
+        const sym = normalizeSymbol(symbol);
+        if (!sym) return;
         set((st) => ({
-          widgets: st.widgets.map((w) => (w.id === id ? { ...w, symbol: symbol.toUpperCase(), linked: false } : w)),
-        })),
+          widgets: st.widgets.map((w) => (w.id === id ? { ...w, symbol: sym, linked: false } : w)),
+        }));
+      },
       toggleLinked: (id) =>
         set((st) => ({
           widgets: st.widgets.map((w) => (w.id === id ? { ...w, linked: !w.linked } : w)),
         })),
       setLayout: (layout) => set({ layout }),
-      addToWatchlist: (s) =>
+      addToWatchlist: (s) => {
+        const sym = normalizeSymbol(s);
+        if (!sym) return;
         set((st) => ({
-          watchlist: st.watchlist.includes(s.toUpperCase()) ? st.watchlist : [...st.watchlist, s.toUpperCase()],
-        })),
+          watchlist: st.watchlist.includes(sym) ? st.watchlist : [...st.watchlist, sym],
+        }));
+      },
       removeFromWatchlist: (s) => set((st) => ({ watchlist: st.watchlist.filter((x) => x !== s) })),
       resetWorkspace: () => set({ widgets: DEFAULT_WIDGETS, layout: DEFAULT_LAYOUT }),
     }),
