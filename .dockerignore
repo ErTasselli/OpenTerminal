@@ -1,0 +1,25 @@
+# Keep the build context to what the Dockerfiles actually need. Both images
+# install their own dependencies and build from source, so local installs,
+# build output, secrets and runtime data must never reach the daemon (they
+# would otherwise end up in image layers via `COPY web/ ./`).
+
+# Dependencies and build output
+**/node_modules
+**/.next
+**/dist
+**/out
+**/*.tsbuildinfo
+
+# Local secrets
+**/.env
+**/.env.*
+
+# Runtime data (SQLite DB, generated API key)
+data
+
+# Repo metadata and docs
+.git
+.github
+docs
+**/*.log
+**/.DS_Store
