@@ -297,3 +297,62 @@ export async function search(query: string): Promise<SearchResult[]> {
       };
     });
 }
+
+export type FxRow = {
+  ticker: string;
+  name: string | null;
+  price: number | null;
+  change: number | null;
+  changePercent: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  perfWeek: number | null;
+  perfMonth: number | null;
+  perfYtd: number | null;
+  perfYear: number | null;
+};
+
+const FX_COLUMNS = ["description", "close", "change_abs", "change", "open", "high", "low", "Perf.W", "Perf.1M", "Perf.YTD", "Perf.Y"];
+
+/**
+ * Live FX quotes from TradingView's forex scanner, one batched request for
+ * every ticker ("FX_IDC:USDCLP", "FX:EURUSD", ...). Yahoo's "=X" symbols
+ * would be the obvious source but its edge rate-limits non-browser clients
+ * hard (429), and the forex scanner also returns 1W/1M/YTD/1Y performance,
+ * which gives historical context without a separate history call.
+ * Rows come back keyed by the ticker exactly as requested; unknown tickers
+ * are simply absent from the response.
+ */
+export async function fxScan(tickers: string[]): Promise<Map<string, FxRow>> {
+  const out = new Map<string, FxRow>();
+  if (tickers.length === 0) return out;
+  const res = await fetch("https://scanner.tradingview.com/forex/scan", {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ symbols: { tickers }, columns: FX_COLUMNS }),
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) throw new Error(`tradingview fx scan ${res.status}`);
+  const json = await res.json();
+  const rows: Array<{ s: string; d: any[] }> = json?.data ?? [];
+  const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
+  for (const r of rows) {
+    const [name, close, changeAbs, change, open, high, low, perfW, perf1M, perfYtd, perfY] = r.d ?? [];
+    out.set(r.s, {
+      ticker: r.s,
+      name: typeof name === "string" ? name : null,
+      price: num(close),
+      change: num(changeAbs),
+      changePercent: num(change),
+      open: num(open),
+      high: num(high),
+      low: num(low),
+      perfWeek: num(perfW),
+      perfMonth: num(perf1M),
+      perfYtd: num(perfYtd),
+      perfYear: num(perfY),
+    });
+  }
+  return out;
+}

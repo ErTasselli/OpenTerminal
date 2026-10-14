@@ -20,6 +20,7 @@ import AiWidget from "./widgets/AiWidget";
 import CalendarWidget from "./widgets/CalendarWidget";
 import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
+import FxWidget from "./widgets/FxWidget";
 import RecapWidget from "./widgets/RecapWidget";
 import WidgetErrorBoundary from "./WidgetErrorBoundary";
 
@@ -42,6 +43,7 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "insider": return <InsiderWidget widget={widget} />;
     case "tv": return <TvWidget />;
     case "recap": return <RecapWidget />;
+    case "fx": return <FxWidget />;
   }
 }
 
@@ -95,7 +97,7 @@ const TITLES: Record<string, string> = {
   quote: "Quote", chart: "Chart", watchlist: "Watchlist", news: "News",
   heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
-  calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
+  calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap", fx: "FX / LatAm",
 };
 
 export default function Workspace() {

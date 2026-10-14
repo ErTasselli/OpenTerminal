@@ -12,6 +12,7 @@ const ITEMS: Array<{ type: WidgetType; label: string; key: string }> = [
   { type: "options", label: "OPTIONS", key: "⌥7" },
   { type: "portfolio", label: "PORTFOLIO", key: "⌥8" },
   { type: "ai", label: "AI ASSIST", key: "⌥9" },
+  { type: "fx", label: "FX", key: "⌥0" },
   { type: "watchlist", label: "WATCHLIST", key: "" },
   { type: "macro", label: "MACRO", key: "" },
   { type: "calendar", label: "CALENDAR", key: "" },

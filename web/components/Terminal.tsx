@@ -29,6 +29,7 @@ export default function Terminal() {
           "7": () => addWidget("options"),
           "8": () => addWidget("portfolio"),
           "9": () => addWidget("ai"),
+          "0": () => addWidget("fx"),
         };
         const fn = map[e.key];
         if (fn) {

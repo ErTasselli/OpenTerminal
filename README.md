@@ -36,7 +36,7 @@ No signup. No credit card. No rate‑limited demo tier. Clone it, `npm install`,
 ## ✨ Features
 
 - 🖥️ **Widget-based workspace** — drag, resize, add, and remove panels (`react-grid-layout`); your layout is saved locally and restored on reload
-- ⌘K **global command palette** — instantly search stocks, ETFs, and crypto and jump straight to them
+- ⌘K **global command palette** — instantly search stocks, ETFs, crypto, and FX pairs (`usd/clp`, `eur`, `yen`) and jump straight to them
 - 📈 **Professional charting** (via [`lightweight-charts`](https://github.com/tradingview/lightweight-charts)) — candlesticks, bars, line, area, volume, 8 timeframes (1D → MAX), and SMA / EMA / VWAP / Bollinger Bands / RSI / MACD indicators, each with a live hover legend showing OHLC, volume, and every active indicator's value under your cursor
 - 💹 **Quote panel** — last / bid / ask / OHLC, volume, market cap, P/E, EPS, dividend yield, 52‑week range, beta, shares outstanding
 - 📰 **News feed** — aggregated and de‑duplicated from multiple RSS sources, per‑symbol or global
@@ -44,12 +44,13 @@ No signup. No credit card. No rate‑limited demo tier. Clone it, `npm install`,
 - 🗺️ **Live sector heatmap** — treemap sized by market cap, colored by daily % change, refreshing every few seconds
 - ⛓️ **Options chain** — calls and puts side‑by‑side with strike, bid/ask, volume, open interest, and ITM highlighting
 - 🪙 **Crypto board** — top assets with 7‑day sparklines, BTC/ETH dominance, and full OHLCV charting for any listed coin
+- 💱 **FX board** — an editable board of currency pairs (~50 currencies, crosses included, with a LatAm‑leaning default set) showing last, daily change, and 1W / 1M / YTD / 1Y performance, plus Chile's official *dólar observado* rate with a 30‑day sparkline; any pair can be charted with daily history
 - 🏦 **Macro dashboard** — live US Treasury yield curve, VIX, and major index/commodity proxies
 - 💼 **Portfolio tracker** — log buy/sell transactions, track average cost, realized & unrealized P&L (persisted in SQLite)
 - 📅 **Calendar** — economic events (Fed, ECB, CPI, NFP and more) with consensus forecast, previous reading and, for the major US/EU releases, the actual outcome; plus a per‑watchlist earnings calendar with click‑through history showing forecast vs. actual EPS for the last several quarters and the stock's next‑day price move
 - 🤖 **AI assistant** (optional) — ask questions about the symbol you're looking at, powered by Claude, fully context‑aware of the terminal's current data
 - ⚡ **Near real‑time updates** — quotes and indexes refresh every second with a subtle flash on change, so you always know what just moved
-- ⌨️ **Keyboard shortcuts** everywhere — `⌘K` to search, `⌥1`–`⌥9` to add any widget
+- ⌨️ **Keyboard shortcuts** everywhere — `⌘K` to search, `⌥1`–`⌥9` and `⌥0` (FX) to add any widget
 
 <br/>
 
@@ -102,6 +103,9 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | News | Yahoo Finance RSS | Google News RSS |
 | Crypto quotes & board | CoinGecko | Binance public API |
 | Crypto candles | Binance public API (klines) | — |
+| FX quotes | TradingView forex scanner (`FX_IDC` composite, `FX:EURUSD`) | — |
+| FX daily history | [currency‑api](https://github.com/fawazahmed0/exchange-api) via jsDelivr (since 2024‑03) | Cloudflare Pages mirror |
+| Chile's *dólar observado* (USD/CLP official rate) | mindicador.cl | api.boostr.cl |
 | Macro (Treasury yields, VIX) | FRED (Federal Reserve) | — |
 | Economic calendar (schedule, forecast, previous) | Forex Factory public feed | — |
 | Economic calendar (actual — Fed / ECB / CPI / NFP only) | FRED (Federal Reserve) | — |
@@ -176,13 +180,13 @@ Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode). Ports 
 ```
 ├── server/                  # Express + TypeScript API
 │   └── src/
-│       ├── providers/       # nasdaq, tradingview, yahoo, stooq, fred, econcalendar, coingecko, binance, news
+│       ├── providers/       # nasdaq, tradingview, yahoo, stooq, fred, econcalendar, coingecko, binance, currencyapi, clindicators, news
 │       ├── routes/          # market, portfolio, ai
 │       ├── cache.ts         # TTL cache with stale-while-revalidate fallback
 │       └── db.ts            # SQLite (better-sqlite3, WAL)
 └── web/                      # Next.js 15 + React 19 + Tailwind 4
     ├── components/           # TopBar, Sidebar, Workspace, CommandPalette
-    ├── components/widgets/   # Chart, Quote, Watchlist, News, Screener, Heatmap, Crypto, Options, Macro, Portfolio, Calendar, AI
+    ├── components/widgets/   # Chart, Quote, Watchlist, News, Screener, Heatmap, Crypto, Options, Macro, Portfolio, Calendar, AI, FX
     ├── lib/                  # API client, technical indicators
     └── store/                # Zustand store (workspace layout, persisted)
 ```

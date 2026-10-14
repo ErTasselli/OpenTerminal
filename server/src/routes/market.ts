@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { cached, cacheGet, cacheStore, staleGet } from "../cache.js";
-import { withFallback } from "../providers/registry.js";
+import { tracked, withFallback } from "../providers/registry.js";
 import * as yahoo from "../providers/yahoo.js";
 import * as stooq from "../providers/stooq.js";
 import * as nasdaq from "../providers/nasdaq.js";
@@ -13,6 +13,9 @@ import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
+import * as clindicators from "../providers/clindicators.js";
+import * as currencyapi from "../providers/currencyapi.js";
+import { DEFAULT_FX_SYMBOLS, fxDigits, fxPairFor, searchFx, type FxPair } from "../fx.js";
 
 export const marketRouter = Router();
 
@@ -93,6 +96,37 @@ async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
   });
 }
 
+function fxQuote(symbol: string, p: FxPair, r: tradingview.FxRow): yahoo.Quote {
+  return {
+    symbol,
+    name: `${p.pair} — ${p.name}`,
+    price: r.price,
+    change: r.change,
+    changePercent: r.changePercent,
+    open: r.open,
+    high: r.high,
+    low: r.low,
+    previousClose: r.price !== null && r.change !== null ? r.price - r.change : null,
+    bid: null,
+    ask: null,
+    volume: null,
+    avgVolume: null,
+    marketCap: null,
+    pe: null,
+    eps: null,
+    dividendYield: null,
+    week52High: null,
+    week52Low: null,
+    beta: null,
+    sharesOutstanding: null,
+    currency: p.quote,
+    exchange: "FX",
+    marketState: null,
+    time: null,
+    source: "tradingview",
+  };
+}
+
 // ---- quotes (per-symbol cache, so overlapping widgets share one fetch) ----
 
 /**
@@ -140,6 +174,24 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
       if (r.status === "fulfilled") fetched.set(vixSymbols[i], r.value);
     });
     remaining = remaining.filter((s) => !fetched.has(s));
+  }
+
+  const fxSymbols = remaining.filter((s) => fxPairFor(s));
+  if (fxSymbols.length > 0) {
+    try {
+      const rows = await tracked("tradingview-fx", () =>
+        tradingview.fxScan(fxSymbols.map((s) => fxPairFor(s)!.ticker))
+      );
+      for (const s of fxSymbols) {
+        const p = fxPairFor(s)!;
+        const r = rows.get(p.ticker);
+        if (r?.price != null) fetched.set(s, fxQuote(s, p, r));
+      }
+    } catch {
+      // falls back to the last-known quote below
+    }
+    // Never send FX symbols on to the stock providers: "USDCLP=X" means nothing to Nasdaq.
+    remaining = remaining.filter((s) => !fxPairFor(s));
   }
 
   const nasdaqResults = await Promise.allSettled(remaining.map((s) => nasdaq.quote(s)));
@@ -234,6 +286,8 @@ marketRouter.get("/history/:symbol", async (req, res) => {
     const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
       binance.CRYPTO_SYMBOLS.has(symbol)
         ? binance.history(symbol, rangeKey)
+        : fxPairFor(symbol)
+        ? tracked("currency-api", () => currencyapi.history(fxPairFor(symbol)!.base, fxPairFor(symbol)!.quote, rangeKey))
         : isVix(symbol)
         ? vixHistory(rangeKey)
         : withFallback([
@@ -245,6 +299,10 @@ marketRouter.get("/history/:symbol", async (req, res) => {
     if (!Array.isArray(data) || data.length === 0) throw new Error("empty history from all providers");
     res.json(data);
   } catch (err) {
+    // A pair with no history source (e.g. the UF) is a known gap, not an outage.
+    if (fxPairFor(symbol) && err instanceof Error && err.message.startsWith("No daily history")) {
+      return res.status(404).json({ error: err.message });
+    }
     fail(req, res, err);
   }
 });
@@ -268,6 +326,10 @@ function yahooRange(rangeKey: string): { range: string; interval: string } {
 marketRouter.get("/search", async (req, res) => {
   const q = String(req.query.q ?? "").trim();
   if (!q) return res.json([]);
+  // FX pairs are matched locally and listed first — the remote searches
+  // below only return stocks/funds, so "usd/clp" would otherwise find
+  // unrelated tickers like "CLP Holdings".
+  const fx = searchFx(q);
   try {
     const data = await cached(`search:${q.toLowerCase()}`, 300_000, () =>
       withFallback([
@@ -275,8 +337,9 @@ marketRouter.get("/search", async (req, res) => {
         ["yahoo", () => yahoo.search(q)],
       ])
     );
-    res.json(data);
+    res.json([...fx, ...data]);
   } catch (err) {
+    if (fx.length > 0) return res.json(fx);
     fail(req, res, err);
   }
 });
@@ -766,6 +829,61 @@ marketRouter.get("/short-volume/:symbol", async (req, res) => {
     const row = day.get(symbol);
     if (!row) return res.json(null);
     res.json({ ...row, shortVolumePercent: (row.shortVolume / row.totalVolume) * 100 });
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// ---- FX (TradingView forex scanner + Chile's dólar observado) ----
+
+// The widget's board: ?symbols=USDCLP=X,USDBRL=X (defaults when omitted).
+// Unknown symbols are dropped; one TradingView request serves the whole board.
+marketRouter.get("/fx", async (req, res) => {
+  const requested = req.query.symbols
+    ? String(req.query.symbols).split(",").map((s) => s.trim().toUpperCase())
+    : DEFAULT_FX_SYMBOLS;
+  const pairs = [...new Set(requested)].map((s) => fxPairFor(s)).filter((p): p is FxPair => !!p).slice(0, 40);
+  try {
+    const key = pairs.map((p) => p.symbol).join(",");
+    const rows = await cached(`fx:board:${key}`, 2_000, () =>
+      tracked("tradingview-fx", () => tradingview.fxScan(pairs.map((p) => p.ticker)))
+    );
+    res.json(
+      pairs.map((p) => {
+        const r = rows.get(p.ticker);
+        return {
+          symbol: p.symbol,
+          pair: p.pair,
+          ticker: p.ticker,
+          digits: fxDigits(r?.price ?? null),
+          price: r?.price ?? null,
+          change: r?.change ?? null,
+          changePercent: r?.changePercent ?? null,
+          high: r?.high ?? null,
+          low: r?.low ?? null,
+          perfWeek: r?.perfWeek ?? null,
+          perfMonth: r?.perfMonth ?? null,
+          perfYtd: r?.perfYtd ?? null,
+          perfYear: r?.perfYear ?? null,
+        };
+      })
+    );
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// Published once per banking day, so a long TTL is plenty — and it keeps a
+// flaky mirror from being hammered by the widget's polling.
+marketRouter.get("/fx/observado", async (req, res) => {
+  try {
+    const data = await cached("fx:observado", 1_800_000, () =>
+      withFallback([
+        ["mindicador", () => clindicators.fromMindicador()],
+        ["boostr", () => clindicators.fromBoostr()],
+      ])
+    );
+    res.json(data);
   } catch (err) {
     fail(req, res, err);
   }

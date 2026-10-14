@@ -167,12 +167,16 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
         .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     }
 
-    // volume histogram on its own scale at the bottom of the main pane
-    const vol = chart.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" } });
-    vol.priceScale().applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    vol.setData(
-      candles.map((c) => ({ time: ts(c.time), value: c.volume, color: c.close >= c.open ? "rgba(0,200,83,0.4)" : "rgba(255,61,61,0.4)" }))
-    );
+    // volume histogram on its own scale at the bottom of the main pane —
+    // skipped for series with no volume at all (FX), which would otherwise
+    // draw an empty pane with a stray "0" price label.
+    if (candles.some((c) => c.volume > 0)) {
+      const vol = chart.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" } });
+      vol.priceScale().applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+      vol.setData(
+        candles.map((c) => ({ time: ts(c.time), value: c.volume, color: c.close >= c.open ? "rgba(0,200,83,0.4)" : "rgba(255,61,61,0.4)" }))
+      );
+    }
 
     const overlay = (points: Point[], color: string) =>
       chart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
@@ -262,7 +266,9 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
               <span className="dim">H <span className="up">{fmt(legend.high)}</span></span>
               <span className="dim">L <span className="down">{fmt(legend.low)}</span></span>
               <span className="dim">C <span className={legend.close >= legend.open ? "up" : "down"}>{fmt(legend.close)}</span></span>
-              <span className="dim">Vol <span className="text-[var(--text)]">{fmtBig(legend.volume)}</span></span>
+              {legend.volume > 0 && (
+                <span className="dim">Vol <span className="text-[var(--text)]">{fmtBig(legend.volume)}</span></span>
+              )}
             </div>
             {indicatorRows.length > 0 && (
               <div className="flex gap-3 flex-wrap">
