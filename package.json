@@ -3,7 +3,10 @@
   "private": true,
   "workspaces": ["server", "web"],
   "overrides": {
-    "qs": "^6.16.0"
+    "qs": "^6.16.0",
+    "next": {
+      "postcss": "^8.5.30"
+    }
   },
   "scripts": {
     "dev": "concurrently -n api,web -c yellow,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
