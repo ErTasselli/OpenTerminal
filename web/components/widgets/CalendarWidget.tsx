@@ -160,7 +160,7 @@ function EarningsHistoryRows({ symbol }: { symbol: string }) {
           <th>Forecast</th>
           <th>Actual</th>
           <th>Surprise</th>
-          <th>Day After</th>
+          <th title="Reported-date close to next session close; release time is unavailable">Day After</th>
         </tr>
       </thead>
       <tbody>

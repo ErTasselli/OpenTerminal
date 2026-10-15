@@ -1,4 +1,5 @@
 import type { Quote, Candle } from "./yahoo.js";
+import { normalizeExpiry } from "../expiry.js";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const HEADERS = { "User-Agent": UA, Accept: "application/json", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
@@ -181,9 +182,15 @@ export async function optionChain(symbol: string, expiry?: string): Promise<Nasd
   const data = await nfetch(
     `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/option-chain?assetclass=stocks&limit=2000&fromdate=${fmtDate(new Date())}&todate=${fmtDate(to)}`
   );
-  const rows: any[] = (data.table?.rows ?? []).filter((r: any) => r.strike);
+  const now = new Date();
+  const rows: any[] = (data.table?.rows ?? [])
+    .filter((r: any) => r.strike)
+    .map((r: any) => ({ ...r, expiryDate: normalizeExpiry(String(r.expiryDate ?? ""), now) }))
+    .filter((r: any) => r.expiryDate !== null);
   const dates = [...new Set<string>(rows.map((r) => r.expiryDate))];
-  const selected = expiry && dates.includes(expiry) ? expiry : dates[0] ?? null;
+  if (expiry && !dates.includes(expiry)) throw new Error("nasdaq: requested expiry unavailable");
+  const selected = expiry ?? dates[0] ?? null;
+  if (!selected) throw new Error("nasdaq: no option expirations");
   const selectedRows = rows.filter((r) => r.expiryDate === selected);
 
   const calls: NasdaqOptionRow[] = [];

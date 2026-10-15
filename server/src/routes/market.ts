@@ -13,6 +13,8 @@ import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
+import { dayAfterEarningsChange } from "../earnings.js";
+import { normalizeExpiry } from "../expiry.js";
 
 export const marketRouter = Router();
 
@@ -322,7 +324,8 @@ marketRouter.get("/econ-calendar", async (req, res) => {
 
 marketRouter.get("/options/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
-  const expiry = req.query.expiry ? String(req.query.expiry) : undefined;
+  const expiry = req.query.expiry === undefined ? undefined : normalizeExpiry(String(req.query.expiry));
+  if (expiry === null) return res.status(400).json({ error: "invalid expiry date" });
   try {
     const data = await cached(`options:${symbol}:${expiry ?? "front"}`, 60_000, () =>
       withFallback([
@@ -330,12 +333,14 @@ marketRouter.get("/options/:symbol", async (req, res) => {
         [
           "yahoo",
           async () => {
-            const y = await yahoo.options(symbol);
+            const y = await yahoo.options(symbol, expiry ? Date.parse(`${expiry}T00:00:00Z`) / 1000 : undefined);
+            const selectedDate = y.selectedDate ? new Date(y.selectedDate * 1000).toISOString().slice(0, 10) : null;
+            if (expiry && selectedDate !== expiry) throw new Error("yahoo: requested expiry unavailable");
             return {
               symbol: y.symbol,
               underlyingPrice: y.underlyingPrice,
               expirationDates: y.expirationDates.map((d: number) => new Date(d * 1000).toISOString().slice(0, 10)),
-              selectedDate: y.selectedDate ? new Date(y.selectedDate * 1000).toISOString().slice(0, 10) : null,
+              selectedDate,
               calls: y.calls,
               puts: y.puts,
             };
@@ -733,23 +738,10 @@ marketRouter.get("/earnings-history/:symbol", async (req, res) => {
           ["stooq", () => stooq.history(symbol)],
         ]),
       ]);
-      const sorted = [...candles].sort((a, b) => a.time - b.time);
-      // Nearest trading-day close on/after a given date, and the close of the
-      // trading day right after that — the "day after earnings" move.
-      const closeOnOrAfter = (unixSeconds: number) => {
-        for (let i = 0; i < sorted.length; i++) {
-          if (sorted[i].time >= unixSeconds - 3 * 86_400) return i;
-        }
-        return -1;
-      };
-      return surprises.map((s) => {
-        const idx = closeOnOrAfter(s.dateReported);
-        const dayAfterChangePercent =
-          idx >= 0 && idx + 1 < sorted.length
-            ? ((sorted[idx + 1].close - sorted[idx].close) / sorted[idx].close) * 100
-            : null;
-        return { ...s, dayAfterChangePercent };
-      });
+      return surprises.map((s) => ({
+        ...s,
+        dayAfterChangePercent: dayAfterEarningsChange(candles, s.dateReported),
+      }));
     });
     res.json(data);
   } catch (err) {

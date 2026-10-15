@@ -41,6 +41,10 @@ export function rsi(candles: Candle[], period = 14): Point[] {
   const out: Point[] = [];
   let avgGain = 0;
   let avgLoss = 0;
+  // A completely flat window is neutral; gains without losses reach 100.
+  const value = () => avgLoss === 0
+    ? (avgGain === 0 ? 50 : 100)
+    : 100 - 100 / (1 + avgGain / avgLoss);
   for (let i = 1; i < candles.length; i++) {
     const diff = candles[i].close - candles[i - 1].close;
     const gain = Math.max(diff, 0);
@@ -49,14 +53,12 @@ export function rsi(candles: Candle[], period = 14): Point[] {
       avgGain += gain / period;
       avgLoss += loss / period;
       if (i === period) {
-        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-        out.push({ time: candles[i].time, value: 100 - 100 / (1 + rs) });
+        out.push({ time: candles[i].time, value: value() });
       }
     } else {
       avgGain = (avgGain * (period - 1) + gain) / period;
       avgLoss = (avgLoss * (period - 1) + loss) / period;
-      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      out.push({ time: candles[i].time, value: 100 - 100 / (1 + rs) });
+      out.push({ time: candles[i].time, value: value() });
     }
   }
   return out;
