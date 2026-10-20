@@ -17,6 +17,9 @@ import { sma, ema, vwap, rsi, macd, bollinger, type Point } from "../../lib/indi
 import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
 
 const RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
+/** 9:30-16:00 in the 5-minute buckets the server builds for 1D. */
+const SESSION_SLOTS_1D = 78;
+const MIN_VISIBLE_SLOTS = 60;
 const CHART_TYPES = ["candles", "bars", "line", "area"] as const;
 const INDICATORS = ["SMA20", "SMA50", "SMA200", "EMA20", "VWAP", "BOLL", "RSI", "MACD"] as const;
 
@@ -217,7 +220,13 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       if (hit) setLegend(hit);
     });
 
-    chart.timeScale().fitContent();
+    // fitContent() stretches whatever bars exist across the whole panel, so early in the
+    // session 1D showed a dozen giant candles. Reserve the full session instead (78 five-minute
+    // slots, 9:30-16:00) and let it fill in left to right; other ranges get a minimum of 60 slots
+    // so short histories (new listings) don't balloon either.
+    const minSlots = range === "1D" ? SESSION_SLOTS_1D : MIN_VISIBLE_SLOTS;
+    if (candles.length < minSlots) chart.timeScale().setVisibleLogicalRange({ from: -1.5, to: minSlots - 0.5 });
+    else chart.timeScale().fitContent();
     return () => {
       chart.remove();
       chartRef.current = null;
