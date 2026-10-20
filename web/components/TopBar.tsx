@@ -1,5 +1,6 @@
 "use client";
 
+import LogoMark from "./LogoMark";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
@@ -40,6 +41,8 @@ function marketStateNY(): { label: string; open: boolean } {
 export default function TopBar() {
   const setCommandOpen = useTerminal((s) => s.setCommandOpen);
   const activeSymbol = useTerminal((s) => s.activeSymbol);
+  const learnMode = useTerminal((s) => s.learnMode);
+  const toggleLearnMode = useTerminal((s) => s.toggleLearnMode);
   const { data: status } = useQuery({
     queryKey: ["status"],
     queryFn: () => apiGet<Status>("/api/status"),
@@ -51,7 +54,10 @@ export default function TopBar() {
 
   return (
     <header className="flex items-center gap-4 px-3 h-8 bg-[var(--panel-2)] border-b border-[var(--border)] text-[11px] shrink-0">
-      <span className="amber font-bold tracking-widest">OPENTERMINAL</span>
+      <span className="flex items-center gap-1.5 amber font-bold tracking-widest">
+        <LogoMark />
+        OPENTERMINAL
+      </span>
       <span className={market.open ? "up" : "down"}>● {market.label}</span>
       <Clock tz="America/New_York" label="NY" />
       <Clock tz="Europe/Rome" label="MIL" />
@@ -69,6 +75,14 @@ export default function TopBar() {
           ? healthy.map((p) => `${p.name} ${p.lastLatencyMs ?? "—"}ms`).join(" · ")
           : "connecting…"}
       </span>
+      <button
+        className={`term-btn ${learnMode ? "active" : ""}`}
+        onClick={toggleLearnMode}
+        aria-pressed={learnMode}
+        title="Beginner explanations: hover any dotted-underlined label"
+      >
+        LEARN {learnMode ? "ON" : "OFF"}
+      </button>
       <span className={status?.ai ? "up" : "dim"}>AI {status?.ai ? "●" : "○"}</span>
     </header>
   );

@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { httpFetch } from "../http.js";
 
 export type NewsItem = {
   title: string;
@@ -11,8 +12,16 @@ export type NewsItem = {
 const parser = new XMLParser({ ignoreAttributes: false });
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
 
+/** RSS dates come from third parties; one malformed pubDate must not throw
+ * (Date#toISOString raises RangeError on Invalid Date) and sink the whole feed. */
+export function toIsoOrNull(value: unknown): string | null {
+  if (!value) return null;
+  const d = new Date(String(value));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 async function fetchRss(url: string, publisher: string, symbol: string | null): Promise<NewsItem[]> {
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const res = await httpFetch(url, { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`rss ${res.status} ${url}`);
   const xml = await res.text();
   const doc = parser.parse(xml);
@@ -24,7 +33,7 @@ async function fetchRss(url: string, publisher: string, symbol: string | null): 
       title: String(i.title),
       link: String(i.link),
       publisher: i.source?.["#text"] ?? publisher,
-      publishedAt: i.pubDate ? new Date(i.pubDate).toISOString() : null,
+      publishedAt: toIsoOrNull(i.pubDate),
       symbol,
     }));
 }

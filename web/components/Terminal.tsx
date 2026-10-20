@@ -5,6 +5,7 @@ import TopBar from "./TopBar";
 import Sidebar from "./Sidebar";
 import Workspace from "./Workspace";
 import CommandPalette from "./CommandPalette";
+import AlertNotifier from "./AlertNotifier";
 import { useTerminal } from "../store/terminal";
 
 export default function Terminal() {
@@ -51,6 +52,7 @@ export default function Terminal() {
         </main>
       </div>
       <CommandPalette />
+      <AlertNotifier />
     </div>
   );
 }

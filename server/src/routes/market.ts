@@ -13,12 +13,30 @@ import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
+import { normalizeSymbol } from "../symbol.js";
+import { mergeLiveCandle } from "../livecandle.js";
+import { parseExpiry, withGreeks } from "../greeks.js";
+import { BENCHMARK, SECTOR_ETFS, completedSessions, periodReturns, relativeStrength } from "../sectorStrength.js";
+import { etSessionDay } from "../livecandle.js";
+import { mapWithConcurrency } from "../concurrency.js";
 
 export const marketRouter = Router();
 
+// Every /:symbol route: reject non-ticker input with 400 before it reaches a
+// provider URL or a cache key, and hand handlers the normalized form.
+marketRouter.param("symbol", (req, res, next, raw) => {
+  const symbol = normalizeSymbol(raw);
+  if (!symbol) return res.status(400).json({ error: "invalid symbol" });
+  req.params.symbol = symbol;
+  next();
+});
+
 const QUOTE_TTL = 1_000;
 const HISTORY_TTL = 20_000;
+const INTRADAY_TTL = 5_000;
 const NEWS_TTL = 60_000;
+// Same set the chart offers (web/components/widgets/ChartWidget.tsx).
+const HISTORY_RANGES = new Set(["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"]);
 
 function fail(req: any, res: any, err: unknown) {
   const detail = err instanceof Error ? err.message : String(err);
@@ -111,7 +129,7 @@ async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
  * per-IP rate limit (see index.ts).
  */
 const FALLBACK_PER_SYMBOL_CAP = 20;
-async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
+export async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   const fresh = new Map<string, yahoo.Quote>();
   const missing: string[] = [];
   for (const sym of symbols) {
@@ -210,12 +228,16 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
 }
 
 marketRouter.get("/quotes", async (req, res) => {
-  const symbols = String(req.query.symbols ?? "")
+  const raw = String(req.query.symbols ?? "")
     .split(",")
-    .map((s) => s.trim().toUpperCase())
+    .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, 150);
-  if (symbols.length === 0) return res.status(400).json({ error: "symbols required" });
+  const symbols = [...new Set(raw.map(normalizeSymbol))].filter((s): s is string => s !== null);
+  if (raw.length === 0) return res.status(400).json({ error: "symbols required" });
+  if (symbols.length !== new Set(raw.map((s) => s.toUpperCase())).size) {
+    return res.status(400).json({ error: "invalid symbol in list" });
+  }
   try {
     const data = await getQuotes(symbols);
     if (data.length === 0) throw new Error("no quotes from any provider");
@@ -230,19 +252,36 @@ marketRouter.get("/quotes", async (req, res) => {
 marketRouter.get("/history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const rangeKey = String(req.query.range ?? "6M");
+  // Allowlisted: every distinct string was a distinct cache key, so arbitrary
+  // values bypassed the cache and forced a fresh upstream fan-out each time.
+  if (!HISTORY_RANGES.has(rangeKey)) return res.status(400).json({ error: "unsupported range" });
   try {
-    const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
+    // 1D is the live view (the chart polls it every 8s), so it gets a short TTL.
+    const ttl = rangeKey === "1D" ? INTRADAY_TTL : HISTORY_TTL;
+    const data = await cached(`history:${symbol}:${rangeKey}`, ttl, () =>
       binance.CRYPTO_SYMBOLS.has(symbol)
         ? binance.history(symbol, rangeKey)
         : isVix(symbol)
         ? vixHistory(rangeKey)
         : withFallback([
+            // 1D = today's session at 5-minute resolution. Previously Nasdaq's
+            // daily chart answered first, so "1D" showed a few daily bars with
+            // no candle for the session in progress.
+            ...(rangeKey === "1D"
+              ? ([["nasdaq-intraday", () => nasdaq.intraday(symbol)]] as Array<[string, () => Promise<yahoo.Candle[]>]>)
+              : []),
             ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
             ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],
             ["stooq", () => stooq.history(symbol)],
           ])
     );
     if (!Array.isArray(data) || data.length === 0) throw new Error("empty history from all providers");
+    // Daily ranges end at the last completed session; add today's in-progress
+    // candle from the live quote (1s cache). Crypto/VIX and 1D already cover today.
+    if (rangeKey !== "1D" && !binance.CRYPTO_SYMBOLS.has(symbol) && !isVix(symbol)) {
+      const [q] = await getQuotes([symbol]).catch(() => []);
+      if (q) return res.json(mergeLiveCandle(data, q));
+    }
     res.json(data);
   } catch (err) {
     fail(req, res, err);
@@ -284,7 +323,8 @@ marketRouter.get("/search", async (req, res) => {
 // ---- news ----
 
 marketRouter.get("/news", async (req, res) => {
-  const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : null;
+  const symbol = req.query.symbol === undefined ? null : normalizeSymbol(req.query.symbol);
+  if (req.query.symbol !== undefined && !symbol) return res.status(400).json({ error: "invalid symbol" });
   try {
     const data = await cached(`news:${symbol ?? "top"}`, NEWS_TTL, async () => {
       if (symbol) {
@@ -323,6 +363,10 @@ marketRouter.get("/econ-calendar", async (req, res) => {
 marketRouter.get("/options/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const expiry = req.query.expiry ? String(req.query.expiry) : undefined;
+  // Expiry labels are short dates; bound the shape so it can't mint unbounded cache keys.
+  if (expiry !== undefined && !/^[A-Za-z0-9 ,.\-]{1,24}$/.test(expiry)) {
+    return res.status(400).json({ error: "invalid expiry" });
+  }
   try {
     const data = await cached(`options:${symbol}:${expiry ?? "front"}`, 60_000, () =>
       withFallback([
@@ -343,23 +387,45 @@ marketRouter.get("/options/:symbol", async (req, res) => {
         ],
       ])
     );
-    res.json(data);
+    // Greeks are computed per request (not cached) so time-to-expiry stays current.
+    const r = await riskFreeRate();
+    const exp = data.selectedDate ? parseExpiry(data.selectedDate) : null;
+    res.json({
+      ...data,
+      riskFreeRate: r,
+      calls: withGreeks(data.calls, "call", data.underlyingPrice, exp, r),
+      puts: withGreeks(data.puts, "put", data.underlyingPrice, exp, r),
+    });
   } catch (err) {
     fail(req, res, err);
   }
 });
 
+/** 3-month T-bill yield (FRED DGS3MO) as a decimal; 4% if FRED is unavailable. */
+async function riskFreeRate(): Promise<number> {
+  try {
+    const v = (await cached("fred:DGS3MO", 300_000, () => fred.latest("DGS3MO")))?.value;
+    return typeof v === "number" && Number.isFinite(v) && v > -5 && v < 25 ? v / 100 : 0.04;
+  } catch {
+    return 0.04;
+  }
+}
+
 // ---- crypto ----
+
+/** Top-50 crypto board (shared by GET /crypto and the live stream). */
+export function cryptoBoard() {
+  return cached("crypto:markets", 5_000, () =>
+    withFallback([
+      ["coingecko", () => coingecko.markets(50)],
+      ["binance", () => binance.markets()],
+    ])
+  );
+}
 
 marketRouter.get("/crypto", async (req, res) => {
   try {
-    const data = await cached("crypto:markets", 5_000, () =>
-      withFallback([
-        ["coingecko", () => coingecko.markets(50)],
-        ["binance", () => binance.markets()],
-      ])
-    );
-    res.json(data);
+    res.json(await cryptoBoard());
   } catch (err) {
     fail(req, res, err);
   }
@@ -437,63 +503,67 @@ const EU_INDEX_PROXIES: Record<string, string> = {
   EWI: "Italy (EWI)",
 };
 
-marketRouter.get("/macro", async (req, res) => {
-  try {
-    if (req.query.region === "eu") {
-      const [yieldResults, policyRate, inflation, quotes] = await Promise.all([
-        Promise.allSettled(
-          EU_YIELD_SERIES.map((s) => cached(`ecb:${s.key}`, 300_000, () => ecb.latest(s.flowRef, s.key)))
-        ),
-        cached(`ecb:${EU_POLICY_RATE.key}`, 300_000, () => ecb.latest(EU_POLICY_RATE.flowRef, EU_POLICY_RATE.key)).catch(
-          () => null
-        ),
-        cached(`ecb:${EU_INFLATION.key}`, 300_000, () => ecb.latest(EU_INFLATION.flowRef, EU_INFLATION.key)).catch(
-          () => null
-        ),
-        getQuotes(Object.keys(EU_INDEX_PROXIES)),
-      ]);
-      const yields = EU_YIELD_SERIES.map((s, i) => {
-        const r = yieldResults[i];
-        return { tenor: s.tenor, value: r.status === "fulfilled" ? r.value?.value ?? null : null };
-      }).filter((y) => y.value !== null);
-
-      const indexes = quotes.map((q) => ({
-        symbol: q.symbol,
-        label: EU_INDEX_PROXIES[q.symbol] ?? q.symbol,
-        price: q.price,
-        changePercent: q.changePercent,
-      }));
-
-      if (yields.length === 0 && indexes.length === 0) throw new Error("no EU macro data from any provider");
-      res.json({
-        yields,
-        vix: null,
-        indexes,
-        policyRate: policyRate?.value ?? null,
-        inflation: inflation?.value ?? null,
-      });
-      return;
-    }
-
-    const [yieldResults, vix, quotes] = await Promise.all([
-      Promise.allSettled(YIELD_SERIES.map((s) => cached(`fred:${s.id}`, 300_000, () => fred.latest(s.id)))),
-      cached("fred:VIXCLS", 300_000, () => fred.latest("VIXCLS")).catch(() => null),
-      getQuotes(Object.keys(INDEX_PROXIES)),
+/** US or EU macro snapshot (shared by GET /macro and the live stream). */
+export async function macroData(region: "us" | "eu") {
+  if (region === "eu") {
+    const [yieldResults, policyRate, inflation, quotes] = await Promise.all([
+      Promise.allSettled(
+        EU_YIELD_SERIES.map((s) => cached(`ecb:${s.key}`, 300_000, () => ecb.latest(s.flowRef, s.key)))
+      ),
+      cached(`ecb:${EU_POLICY_RATE.key}`, 300_000, () => ecb.latest(EU_POLICY_RATE.flowRef, EU_POLICY_RATE.key)).catch(
+        () => null
+      ),
+      cached(`ecb:${EU_INFLATION.key}`, 300_000, () => ecb.latest(EU_INFLATION.flowRef, EU_INFLATION.key)).catch(
+        () => null
+      ),
+      getQuotes(Object.keys(EU_INDEX_PROXIES)),
     ]);
-    const yields = YIELD_SERIES.map((s, i) => {
+    const yields = EU_YIELD_SERIES.map((s, i) => {
       const r = yieldResults[i];
       return { tenor: s.tenor, value: r.status === "fulfilled" ? r.value?.value ?? null : null };
     }).filter((y) => y.value !== null);
 
     const indexes = quotes.map((q) => ({
       symbol: q.symbol,
-      label: INDEX_PROXIES[q.symbol] ?? q.symbol,
+      label: EU_INDEX_PROXIES[q.symbol] ?? q.symbol,
       price: q.price,
       changePercent: q.changePercent,
     }));
 
-    if (yields.length === 0 && indexes.length === 0) throw new Error("no macro data from any provider");
-    res.json({ yields, vix: vix?.value ?? null, indexes, policyRate: null, inflation: null });
+    if (yields.length === 0 && indexes.length === 0) throw new Error("no EU macro data from any provider");
+    return {
+      yields,
+      vix: null,
+      indexes,
+      policyRate: policyRate?.value ?? null,
+      inflation: inflation?.value ?? null,
+    };
+  }
+
+  const [yieldResults, vix, quotes] = await Promise.all([
+    Promise.allSettled(YIELD_SERIES.map((s) => cached(`fred:${s.id}`, 300_000, () => fred.latest(s.id)))),
+    cached("fred:VIXCLS", 300_000, () => fred.latest("VIXCLS")).catch(() => null),
+    getQuotes(Object.keys(INDEX_PROXIES)),
+  ]);
+  const yields = YIELD_SERIES.map((s, i) => {
+    const r = yieldResults[i];
+    return { tenor: s.tenor, value: r.status === "fulfilled" ? r.value?.value ?? null : null };
+  }).filter((y) => y.value !== null);
+
+  const indexes = quotes.map((q) => ({
+    symbol: q.symbol,
+    label: INDEX_PROXIES[q.symbol] ?? q.symbol,
+    price: q.price,
+    changePercent: q.changePercent,
+  }));
+
+  if (yields.length === 0 && indexes.length === 0) throw new Error("no macro data from any provider");
+  return { yields, vix: vix?.value ?? null, indexes, policyRate: null, inflation: null };
+}
+
+marketRouter.get("/macro", async (req, res) => {
+  try {
+    res.json(await macroData(req.query.region === "eu" ? "eu" : "us"));
   } catch (err) {
     fail(req, res, err);
   }
@@ -553,10 +623,20 @@ marketRouter.get("/heatmap", async (req, res) => {
   }
 });
 
+// Columns the screener can sort by. Anything else (e.g. "__proto__",
+// "constructor") is rejected rather than used as a property lookup.
+const SCREENER_SORT_KEYS = new Set(["symbol", "name", "price", "changePercent", "volume", "marketCap", "sector"]);
+
 marketRouter.get("/screener", async (req, res) => {
+  const sortKey = String(req.query.sort ?? "marketCap");
+  if (!SCREENER_SORT_KEYS.has(sortKey)) return res.status(400).json({ error: "unsupported sort column" });
+  const num = (v: unknown) => (v === undefined ? undefined : Number(v));
+  for (const k of ["marketCapMin", "changeMin", "changeMax", "volumeMin"]) {
+    const v = num(req.query[k]);
+    if (v !== undefined && !Number.isFinite(v)) return res.status(400).json({ error: `${k} must be a number` });
+  }
   try {
     let rows = await marketRows(marketParam(req));
-    const num = (v: unknown) => (v === undefined ? undefined : Number(v));
     const f = {
       sector: req.query.sector ? String(req.query.sector) : undefined,
       marketCapMin: num(req.query.marketCapMin),
@@ -572,14 +652,49 @@ marketRouter.get("/screener", async (req, res) => {
       if (f.volumeMin !== undefined && (r.volume ?? 0) < f.volumeMin) return false;
       return true;
     });
-    const sortKey = String(req.query.sort ?? "marketCap") as keyof tradingview.MarketRow;
+    const key = sortKey as keyof tradingview.MarketRow;
     const dir = req.query.dir === "asc" ? 1 : -1;
     rows = [...rows].sort((a, b) => {
-      const av = (a[sortKey] as number | null) ?? -Infinity;
-      const bv = (b[sortKey] as number | null) ?? -Infinity;
+      const av = (a[key] as number | null) ?? -Infinity;
+      const bv = (b[key] as number | null) ?? -Infinity;
       return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
     });
     res.json(rows.slice(0, 500));
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+// ---- sector relative strength (SPDR sector ETFs vs SPY) ----
+
+/** 6M of daily history for one ETF; changes once a day, so cached for 10 minutes. */
+function sectorHistory(symbol: string) {
+  return cached(`sector-hist:${symbol}`, 600_000, () =>
+    withFallback([
+      ["nasdaq", () => nasdaq.history(symbol, "6M")],
+      ["yahoo", () => yahoo.history(symbol, "6mo", "1d")],
+    ])
+  );
+}
+
+marketRouter.get("/sector-strength", async (req, res) => {
+  try {
+    const symbols = [BENCHMARK, ...Object.keys(SECTOR_ETFS)];
+    const [quotes, histories] = await Promise.all([
+      getQuotes(symbols),
+      // Polite to the provider: at most 4 history fetches in flight.
+      mapWithConcurrency(symbols, 4, (s) => sectorHistory(s).catch(() => [])),
+    ]);
+    const price = new Map(quotes.map((q) => [q.symbol, q.price]));
+    const today = etSessionDay().time;
+    const returnsOf = (i: number) => periodReturns(completedSessions(histories[i], today), price.get(symbols[i]) ?? null);
+    const bench = returnsOf(0);
+    const sectors = symbols.slice(1).map((symbol, k) => {
+      const returns = returnsOf(k + 1);
+      return { symbol, name: SECTOR_ETFS[symbol], returns, rs: relativeStrength(returns, bench) };
+    });
+    if (sectors.every((x) => x.returns.d1 === null && x.returns.m1 === null)) throw new Error("no sector data from any provider");
+    res.json({ benchmark: { symbol: BENCHMARK, returns: bench }, sectors, asOf: new Date().toISOString() });
   } catch (err) {
     fail(req, res, err);
   }

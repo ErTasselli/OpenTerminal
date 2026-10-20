@@ -6,6 +6,48 @@ import { apiGet, apiPost, apiDelete, fmt, pctClass, type Quote } from "../../lib
 import { symbolsParam } from "../../lib/symbol";
 
 type Portfolio = { id: number; name: string };
+
+/** CSV export (plain download) and all-or-nothing import of transactions. */
+function CsvButtons({ pid }: { pid: number }) {
+  const qc = useQueryClient();
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const upload = async (file: File) => {
+    setMsg(null);
+    if (file.size > 512 * 1024) return setMsg({ ok: false, text: "file too large (max 512 KB)" });
+    const res = await fetch(`/api/portfolios/${pid}/import`, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv" },
+      body: await file.text(),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const first = body.errors?.[0];
+      return setMsg({ ok: false, text: first ? `line ${first.line}: ${first.message}` : body.error ?? `HTTP ${res.status}` });
+    }
+    setMsg({ ok: true, text: `imported ${body.imported} transactions` });
+    qc.invalidateQueries({ queryKey: ["positions", pid] });
+    qc.invalidateQueries({ queryKey: ["transactions", pid] });
+  };
+  return (
+    <>
+      <a className="term-btn" href={`/api/portfolios/${pid}/export.csv`} download>EXPORT</a>
+      <label className="term-btn cursor-pointer" title="CSV columns: symbol,side,quantity,price,executed_at (ISO 8601)">
+        IMPORT
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) void upload(f);
+          }}
+        />
+      </label>
+      {msg && <span className={`text-[10px] ${msg.ok ? "up" : "down"}`}>{msg.text}</span>}
+    </>
+  );
+}
 type Position = { symbol: string; quantity: number; avgCost: number; realizedPnl: number };
 type Tx = { id: number; symbol: string; side: string; quantity: number; price: number; executed_at: string };
 
@@ -81,6 +123,7 @@ export default function PortfolioWidget() {
         <button className={`term-btn ${showTx ? "active" : ""}`} onClick={() => setShowTx(!showTx)}>
           TRANSACTIONS
         </button>
+        {pid && <CsvButtons pid={pid} />}
         <span className="ml-auto">
           MV <span className="amber">{fmt(totals.marketValue)}</span>{" "}
           <span className="dim">Unrl</span> <span className={pctClass(unrealized)}>{fmt(unrealized)}</span>{" "}

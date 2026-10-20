@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { apiGet, fmt, fmtBig, pctClass } from "../../lib/api";
+import { pollUnlessLive, useLiveCrypto } from "../../lib/live";
 import Flash from "../Flash";
 import { useTerminal } from "../../store/terminal";
 
@@ -37,11 +38,14 @@ function Sparkline({ data }: { data: number[] }) {
 
 export default function CryptoWidget() {
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
-  const { data = [], error } = useQuery({
+  const live = useLiveCrypto<CryptoRow[]>();
+  const { data: polled = [], error: pollError } = useQuery({
     queryKey: ["crypto"],
     queryFn: () => apiGet<CryptoRow[]>("/api/crypto"),
-    refetchInterval: 1_000,
+    refetchInterval: pollUnlessLive(live.connected),
   });
+  const data = live.data ?? polled;
+  const error = data.length ? null : pollError;
   const { data: global } = useQuery({
     queryKey: ["crypto-global"],
     queryFn: () => apiGet<GlobalStats>("/api/crypto/global"),
