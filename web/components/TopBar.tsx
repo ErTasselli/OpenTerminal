@@ -9,6 +9,7 @@ type Status = {
   ok: boolean;
   providers: Array<{ name: string; ok: number; failed: number; lastLatencyMs: number | null }>;
   ai: boolean;
+  aiProviders?: Array<{ id: string; label: string; available: boolean; detail?: string }>;
 };
 
 function Clock({ tz, label }: { tz: string; label: string }) {
@@ -48,6 +49,10 @@ export default function TopBar() {
 
   const market = marketStateNY();
   const healthy = status?.providers.filter((p) => p.ok > 0) ?? [];
+  // The assistant is up if any backend is usable — Claude or a local Ollama.
+  const aiUp = status?.aiProviders
+    ? status.aiProviders.some((p) => p.available)
+    : Boolean(status?.ai);
 
   return (
     <header className="flex items-center gap-4 px-3 h-8 bg-[var(--panel-2)] border-b border-[var(--border)] text-[11px] shrink-0">
@@ -69,7 +74,7 @@ export default function TopBar() {
           ? healthy.map((p) => `${p.name} ${p.lastLatencyMs ?? "—"}ms`).join(" · ")
           : "connecting…"}
       </span>
-      <span className={status?.ai ? "up" : "dim"}>AI {status?.ai ? "●" : "○"}</span>
+      <span className={aiUp ? "up" : "dim"}>AI {aiUp ? "●" : "○"}</span>
     </header>
   );
 }

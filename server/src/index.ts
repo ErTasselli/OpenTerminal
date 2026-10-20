@@ -3,6 +3,7 @@ import cors from "cors";
 import { marketRouter } from "./routes/market.js";
 import { portfolioRouter } from "./routes/portfolio.js";
 import { aiRouter } from "./routes/ai.js";
+import { describeProviders } from "./ai/index.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
@@ -44,12 +45,14 @@ app.use(
   aiRouter
 );
 
-app.get("/api/status", (_req, res) => {
+app.get("/api/status", async (_req, res) => {
   res.json({
     ok: true,
     time: new Date().toISOString(),
     providers: allStats(),
     ai: Boolean(process.env.ANTHROPIC_API_KEY),
+    // Which assistant backends are usable right now (Claude, local Ollama…).
+    aiProviders: await describeProviders(),
   });
 });
 

@@ -30,12 +30,17 @@ export type WidgetInstance = {
 
 export type LayoutItem = { i: string; x: number; y: number; w: number; h: number };
 
+/** Which assistant backend the AI widget talks to. Claude is the default. */
+export type AiProviderId = "anthropic" | "ollama";
+
 type TerminalState = {
   activeSymbol: string;
   widgets: WidgetInstance[];
   layout: LayoutItem[];
   watchlist: string[];
   commandOpen: boolean;
+  aiProvider: AiProviderId;
+  aiModel: string;
   setActiveSymbol: (s: string) => void;
   setCommandOpen: (open: boolean) => void;
   addWidget: (type: WidgetType, symbol?: string) => void;
@@ -46,6 +51,8 @@ type TerminalState = {
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   resetWorkspace: () => void;
+  setAiProvider: (p: AiProviderId) => void;
+  setAiModel: (m: string) => void;
 };
 
 const DEFAULT_WIDGETS: WidgetInstance[] = [
@@ -90,6 +97,8 @@ export const useTerminal = create<TerminalState>()(
       layout: DEFAULT_LAYOUT,
       watchlist: ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"],
       commandOpen: false,
+      aiProvider: "anthropic",
+      aiModel: "",
       setActiveSymbol: (s) => {
         const sym = normalizeSymbol(s);
         if (sym) set({ activeSymbol: sym });
@@ -131,6 +140,8 @@ export const useTerminal = create<TerminalState>()(
       },
       removeFromWatchlist: (s) => set((st) => ({ watchlist: st.watchlist.filter((x) => x !== s) })),
       resetWorkspace: () => set({ widgets: DEFAULT_WIDGETS, layout: DEFAULT_LAYOUT }),
+      setAiProvider: (p) => set({ aiProvider: p }),
+      setAiModel: (m) => set({ aiModel: m }),
     }),
     { name: "openterminal-workspace" }
   )

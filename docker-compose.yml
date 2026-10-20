@@ -10,6 +10,12 @@ services:
       - "127.0.0.1:4000:4000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Local Ollama (optional). Defaults to the Docker host, so an Ollama
+      # running on this machine is reachable from inside the container.
+      # Point it somewhere else by setting OLLAMA_BASE_URL in a .env file
+      # next to this compose file (docker compose reads it automatically),
+      # e.g. OLLAMA_BASE_URL=http://192.168.1.50:11434
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - API_KEY=${API_KEY:-}
       - API_HOST=0.0.0.0 # safe: still only published to 127.0.0.1 above
       - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3000}
@@ -18,6 +24,10 @@ services:
       # the web service (see README > Security defaults) — otherwise a caller
       # could forge X-Forwarded-For to dodge the /api/ai rate limit.
       - TRUST_PROXY=${TRUST_PROXY:-}
+    extra_hosts:
+      # Makes "host.docker.internal" resolve on Linux too (Docker Desktop
+      # resolves it natively).
+      - "host.docker.internal:host-gateway"
     volumes:
       - terminal-data:/app/data
     restart: unless-stopped
