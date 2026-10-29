@@ -25,6 +25,14 @@ export type WriteAuditLogInput = {
   outputTokens?: number;
 };
 
+const SUMMARY_TRUNCATE_LENGTH = 80;
+
+/** Shared by every call site that builds a `summary` from arbitrary-length text (chat replies,
+ * Memory Entry content, error messages) so the truncation length/ellipsis style can't drift. */
+export function truncateSummary(s: string): string {
+  return s.length > SUMMARY_TRUNCATE_LENGTH ? `${s.slice(0, SUMMARY_TRUNCATE_LENGTH)}…` : s;
+}
+
 export function writeAuditLog(input: WriteAuditLogInput): void {
   db.prepare(
     "INSERT INTO audit_log (event_type, summary, detail, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)"

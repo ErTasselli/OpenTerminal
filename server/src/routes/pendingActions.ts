@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { db } from "../db.js";
 import { writeAuditLog } from "../audit.js";
 import { txSchema } from "../schemas/transaction.js";
@@ -49,12 +49,31 @@ function resolvePendingAction(id: number, status: "confirmed" | "rejected"): voi
   db.prepare("UPDATE pending_actions SET status = ?, resolved_at = datetime('now') WHERE id = ?").run(status, id);
 }
 
+/**
+ * Guards EDIT/DELETE confirm against a target transaction that's already gone — e.g. two
+ * open Pending Actions reference the same transaction_id, or it was deleted manually via
+ * DELETE /:id/transactions/:txId while a Pending Action on it was still pending. The
+ * `transactions(id) ON DELETE SET NULL` FK (see db.ts) nulls `pending_actions.transaction_id`
+ * in that case, so the confirm UPDATE/DELETE above would silently match zero rows — without
+ * this check it would still mark the action "confirmed" and write a false-success Audit Log
+ * Entry. Deliberately left pending (not auto-rejected) so a human still decides its fate.
+ */
+function respondTargetGone(res: Response, pa: PendingActionRow): void {
+  writeAuditLog({
+    eventType: "error",
+    summary: `confirm ${pa.operation} failed: target transaction no longer exists (pending action #${pa.id})`,
+    detail: { pendingActionId: pa.id, operation: pa.operation, reason: "target transaction no longer exists" },
+  });
+  res.status(409).json({ error: "target transaction no longer exists" });
+}
+
 pendingActionsRouter.post("/:id/pending-actions/:paId/confirm", (req, res) => {
   const pa = findPendingAction(req.params.id, req.params.paId);
   if (!pa) return res.status(404).json({ error: "pending action not found" });
 
   if (pa.operation === "DELETE") {
-    db.prepare("DELETE FROM transactions WHERE id = ? AND portfolio_id = ?").run(pa.transaction_id, req.params.id);
+    const info = db.prepare("DELETE FROM transactions WHERE id = ? AND portfolio_id = ?").run(pa.transaction_id, req.params.id);
+    if (info.changes === 0) return respondTargetGone(res, pa);
     resolvePendingAction(pa.id, "confirmed");
     writeAuditLog({
       eventType: "pending_action",
@@ -110,22 +129,25 @@ pendingActionsRouter.post("/:id/pending-actions/:paId/confirm", (req, res) => {
   // EDIT: also re-tags the edited row with source='ai' + pending_action_id so
   // the row documents that its current values came from an AI-confirmed edit,
   // same provenance contract as ADD above.
-  db.prepare(
-    "UPDATE transactions SET symbol = ?, side = ?, quantity = ?, price = ?, executed_at = ?, instrument_type = ?, option_type = ?, strike = ?, expiration = ?, source = 'ai', pending_action_id = ? WHERE id = ? AND portfolio_id = ?"
-  ).run(
-    t.symbol,
-    t.side,
-    t.quantity,
-    t.price,
-    t.executed_at,
-    t.instrument_type,
-    t.option_type,
-    t.strike,
-    t.expiration,
-    pa.id,
-    pa.transaction_id,
-    req.params.id
-  );
+  const editInfo = db
+    .prepare(
+      "UPDATE transactions SET symbol = ?, side = ?, quantity = ?, price = ?, executed_at = ?, instrument_type = ?, option_type = ?, strike = ?, expiration = ?, source = 'ai', pending_action_id = ? WHERE id = ? AND portfolio_id = ?"
+    )
+    .run(
+      t.symbol,
+      t.side,
+      t.quantity,
+      t.price,
+      t.executed_at,
+      t.instrument_type,
+      t.option_type,
+      t.strike,
+      t.expiration,
+      pa.id,
+      pa.transaction_id,
+      req.params.id
+    );
+  if (editInfo.changes === 0) return respondTargetGone(res, pa);
   resolvePendingAction(pa.id, "confirmed");
   writeAuditLog({
     eventType: "pending_action",

@@ -34,6 +34,7 @@ function fakeRes(): Response {
   return {
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
+    end: vi.fn().mockReturnThis(),
   } as unknown as Response;
 }
 
@@ -222,6 +223,80 @@ describe("POST /:id/pending-actions/:paId/confirm", () => {
     await handler(req, res, () => {});
 
     expect(res.status).toHaveBeenCalledWith(404);
+  });
+});
+
+describe("POST /:id/pending-actions/:paId/confirm against a target that's already gone", () => {
+  it("409s (and leaves the pending action pending) when two Pending Actions target the same transaction and the first DELETE confirm already removed it", async () => {
+    const txId = await addTransaction({
+      symbol: "nvda",
+      side: "BUY",
+      quantity: 2,
+      price: 400,
+      executed_at: "2026-01-05T00:00:00Z",
+    });
+    const snapshot = db.prepare("SELECT * FROM transactions WHERE id = ?").get(txId);
+    const firstPaId = insertPendingAction("DELETE", txId, snapshot);
+    const secondPaId = insertPendingAction("DELETE", txId, snapshot);
+
+    const handler = getHandler(pendingActionsRouter, "/:id/pending-actions/:paId/confirm", "post");
+
+    const firstReq = { params: { id: String(portfolioId), paId: String(firstPaId) }, body: {} } as unknown as Request;
+    const firstRes = fakeRes();
+    await handler(firstReq, firstRes, () => {});
+    expect(firstRes.status).toHaveBeenCalledWith(200);
+
+    // The transactions(id) ON DELETE SET NULL FK (db.ts) nulls out the second
+    // Pending Action's transaction_id now that its target row is gone.
+    const orphaned = db.prepare("SELECT transaction_id FROM pending_actions WHERE id = ?").get(secondPaId) as {
+      transaction_id: number | null;
+    };
+    expect(orphaned.transaction_id).toBeNull();
+
+    const secondReq = { params: { id: String(portfolioId), paId: String(secondPaId) }, body: {} } as unknown as Request;
+    const secondRes = fakeRes();
+    await handler(secondReq, secondRes, () => {});
+
+    expect(secondRes.status).toHaveBeenCalledWith(409);
+    const pa = db.prepare("SELECT * FROM pending_actions WHERE id = ?").get(secondPaId) as Record<string, unknown>;
+    expect(pa.status).toBe("pending");
+    expect(pa.resolved_at).toBeNull();
+  });
+
+  it("409s an EDIT confirm whose target transaction was deleted manually in the meantime", async () => {
+    const txId = await addTransaction({
+      symbol: "amzn",
+      side: "BUY",
+      quantity: 3,
+      price: 150,
+      executed_at: "2026-01-06T00:00:00Z",
+    });
+    const editPayload = {
+      symbol: "AMZN",
+      side: "BUY",
+      quantity: 4,
+      price: 160,
+      executed_at: "2026-01-07T00:00:00Z",
+      instrument_type: "EQUITY",
+    };
+    const paId = insertPendingAction("EDIT", txId, editPayload);
+
+    // Manual delete, same path PortfolioWidget.tsx's transaction-delete button uses.
+    const deleteHandler = getHandler(portfolioRouter, "/:id/transactions/:txId", "delete");
+    await deleteHandler(
+      { params: { id: String(portfolioId), txId: String(txId) } } as unknown as Request,
+      fakeRes(),
+      () => {}
+    );
+
+    const confirmHandler = getHandler(pendingActionsRouter, "/:id/pending-actions/:paId/confirm", "post");
+    const req = { params: { id: String(portfolioId), paId: String(paId) }, body: editPayload } as unknown as Request;
+    const res = fakeRes();
+    await confirmHandler(req, res, () => {});
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    const pa = db.prepare("SELECT * FROM pending_actions WHERE id = ?").get(paId) as Record<string, unknown>;
+    expect(pa.status).toBe("pending");
   });
 });
 

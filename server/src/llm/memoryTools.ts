@@ -4,13 +4,8 @@
 // later chat turn. Mirrors tools.ts's search_news pattern (ToolDef + a matching
 // run*Tool executor) as the sibling tool file for this feature.
 import { db } from "../db.js";
-import { writeAuditLog } from "../audit.js";
+import { writeAuditLog, truncateSummary } from "../audit.js";
 import type { ToolDef } from "./types.js";
-
-// Truncation length for the audit_log `summary` column on a memory_write entry --
-// just enough to identify the entry in the Audit Log widget's list view without
-// duplicating the full content (which lives in `detail`).
-const SUMMARY_TRUNCATE_LENGTH = 80;
 
 export const MEMORY_CATEGORIES = ["preference", "watchlist", "research-note"] as const;
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
@@ -36,7 +31,7 @@ export function createMemoryEntry(content: string, symbol: string | null, catego
   const entry = db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(info.lastInsertRowid) as MemoryEntry;
   writeAuditLog({
     eventType: "memory_write",
-    summary: content.length > SUMMARY_TRUNCATE_LENGTH ? `${content.slice(0, SUMMARY_TRUNCATE_LENGTH)}…` : content,
+    summary: truncateSummary(content),
     detail: { content, symbol, category },
   });
   return entry;

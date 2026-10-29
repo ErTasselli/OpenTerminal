@@ -36,20 +36,20 @@ export default function AiWidget() {
       // three independent lookups concurrently rather than serially, so one slow/failing
       // fetch doesn't add to the others' latency.
       const context: Record<string, unknown> = { activeSymbol, watchlist };
+      // Positions and recent-transactions both need the same default portfolio id — share one
+      // /api/portfolios fetch between them (chained, not awaited up front) so it stays
+      // concurrent with the quote fetch instead of serializing in front of it.
+      const portfolios = apiGet<Portfolio[]>("/api/portfolios");
       const [quoteResult, positionsResult, transactionsResult] = await Promise.allSettled([
         apiGet<Quote[]>(`/api/quotes?symbols=${encodeURIComponent(activeSymbol)}`),
-        (async () => {
-          const portfolios = await apiGet<Portfolio[]>("/api/portfolios");
-          const pid = portfolios[0]?.id;
-          if (!pid) return [];
-          return apiGet<PositionSnapshot[]>(`/api/portfolios/${pid}/positions`);
-        })(),
-        (async () => {
-          const portfolios = await apiGet<Portfolio[]>("/api/portfolios");
-          const pid = portfolios[0]?.id;
-          if (!pid) return [];
-          return apiGet<TransactionSnapshot[]>(`/api/portfolios/${pid}/transactions`);
-        })(),
+        portfolios.then((p) => {
+          const pid = p[0]?.id;
+          return pid ? apiGet<PositionSnapshot[]>(`/api/portfolios/${pid}/positions`) : [];
+        }),
+        portfolios.then((p) => {
+          const pid = p[0]?.id;
+          return pid ? apiGet<TransactionSnapshot[]>(`/api/portfolios/${pid}/transactions`) : [];
+        }),
       ]);
       if (quoteResult.status === "fulfilled") context.quote = quoteResult.value[0];
       if (positionsResult.status === "fulfilled" && positionsResult.value.length > 0) {

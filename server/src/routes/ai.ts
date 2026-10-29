@@ -4,15 +4,7 @@ import type { ChatMessage, ToolCall } from "../llm/types.js";
 import { NEWS_SEARCH_TOOL, runNewsSearchTool } from "../llm/tools.js";
 import { MEMORY_WRITE_TOOL, runWriteMemoryTool, MEMORY_SEARCH_TOOL, runSearchMemoryTool } from "../llm/memoryTools.js";
 import { PROPOSE_TRANSACTION_TOOL, runProposeTransactionTool } from "../llm/transactionTools.js";
-import { writeAuditLog } from "../audit.js";
-
-// Truncation length for the audit_log `summary` column on a chat Audit Log
-// Entry -- just enough to identify the turn in the Audit Log widget's list
-// view without duplicating the full transcript (which lives in `detail`).
-const SUMMARY_TRUNCATE_LENGTH = 80;
-function truncate(s: string): string {
-  return s.length > SUMMARY_TRUNCATE_LENGTH ? `${s.slice(0, SUMMARY_TRUNCATE_LENGTH)}…` : s;
-}
+import { writeAuditLog, truncateSummary as truncate } from "../audit.js";
 
 export const aiRouter = Router();
 
