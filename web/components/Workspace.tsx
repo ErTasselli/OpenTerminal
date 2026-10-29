@@ -22,6 +22,7 @@ import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
 import MemoryWidget from "./widgets/MemoryWidget";
+import PendingActionsWidget from "./widgets/PendingActionsWidget";
 import WidgetErrorBoundary from "./WidgetErrorBoundary";
 
 const Grid = WidthProvider(GridLayout);
@@ -44,6 +45,7 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "tv": return <TvWidget />;
     case "recap": return <RecapWidget />;
     case "memory": return <MemoryWidget />;
+    case "pending-actions": return <PendingActionsWidget />;
   }
 }
 
@@ -99,6 +101,7 @@ const TITLES: Record<string, string> = {
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
   calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
   memory: "Memory",
+  "pending-actions": "Pending Actions",
 };
 
 export default function Workspace() {
