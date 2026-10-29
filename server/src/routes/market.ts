@@ -13,6 +13,8 @@ import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
+import * as feargreed from "../providers/feargreed.js";
+import { aggregate, parseInterval, type Interval } from "../candles.js";
 
 export const marketRouter = Router();
 
@@ -111,7 +113,7 @@ async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
  * per-IP rate limit (see index.ts).
  */
 const FALLBACK_PER_SYMBOL_CAP = 20;
-async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
+async function getQuotesLive(symbols: string[]): Promise<yahoo.Quote[]> {
   const fresh = new Map<string, yahoo.Quote>();
   const missing: string[] = [];
   for (const sym of symbols) {
@@ -209,6 +211,42 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   return out;
 }
 
+// Stale-while-revalidate: a symbol with a last-known quote is answered at once
+// from it while one background refresh (de-duplicated per symbol) updates the
+// cache — the widgets poll every second or so, so they never wait on the slow
+// Nasdaq/Yahoo round trips except for a symbol's very first load.
+const refreshing = new Set<string>();
+
+function refreshInBackground(symbols: string[]): void {
+  const todo = symbols.filter((s) => !refreshing.has(s));
+  if (todo.length === 0) return;
+  todo.forEach((s) => refreshing.add(s));
+  getQuotesLive(todo)
+    .catch(() => {})
+    .finally(() => todo.forEach((s) => refreshing.delete(s)));
+}
+
+async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
+  const out = new Map<string, yahoo.Quote>();
+  const stale: string[] = [];
+  let cold = false;
+  for (const sym of symbols) {
+    const hit = cacheGet<yahoo.Quote>(`quote:${sym}`);
+    if (hit) {
+      out.set(sym, hit);
+      continue;
+    }
+    const old = staleGet<yahoo.Quote>(`quote:${sym}`);
+    if (old) {
+      out.set(sym, old);
+      stale.push(sym);
+    } else cold = true;
+  }
+  if (cold) return getQuotesLive(symbols);
+  refreshInBackground(stale);
+  return symbols.map((s) => out.get(s)!).filter(Boolean);
+}
+
 marketRouter.get("/quotes", async (req, res) => {
   const symbols = String(req.query.symbols ?? "")
     .split(",")
@@ -227,12 +265,48 @@ marketRouter.get("/quotes", async (req, res) => {
 
 // ---- history / candles ----
 
+// Candle-size override (1h/4h/1d/1w/1M). Yahoo has no 4h bar, so that one is
+// built from 60m candles; weekly/monthly fall back to rolling up daily bars.
+const YAHOO_INTERVAL: Record<Interval, { range: string; interval: string }> = {
+  "1h": { range: "1mo", interval: "60m" },
+  "4h": { range: "3mo", interval: "60m" },
+  "1d": { range: "1y", interval: "1d" },
+  "1w": { range: "5y", interval: "1wk" },
+  "1M": { range: "max", interval: "1mo" },
+};
+
+async function intervalHistory(symbol: string, interval: Interval, rangeKey: string): Promise<yahoo.Candle[]> {
+  if (binance.CRYPTO_SYMBOLS.has(symbol)) return binance.history(symbol, rangeKey, interval);
+  if (isVix(symbol)) {
+    if (interval === "1h" || interval === "4h") throw new Error("VIX is only available as daily data");
+    const daily = await vixHistory("MAX");
+    return interval === "1d" ? daily.slice(-252) : aggregate(daily, interval);
+  }
+  const y = YAHOO_INTERVAL[interval];
+  const attempts: Array<[string, () => Promise<yahoo.Candle[]>]> = [
+    ["yahoo", async () => {
+      const rows = await yahoo.history(symbol, y.range, y.interval);
+      return interval === "4h" ? aggregate(rows, "4h") : rows;
+    }],
+  ];
+  if (interval === "1d" || interval === "1w" || interval === "1M") {
+    attempts.push(["nasdaq", async () => {
+      const daily = await nasdaq.history(symbol, interval === "1d" ? "1Y" : "MAX");
+      return interval === "1d" ? daily : aggregate(daily, interval);
+    }]);
+  }
+  return withFallback(attempts);
+}
+
 marketRouter.get("/history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const rangeKey = String(req.query.range ?? "6M");
+  const interval = parseInterval(req.query.interval);
   try {
-    const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
-      binance.CRYPTO_SYMBOLS.has(symbol)
+    const data = await cached(`history:${symbol}:${interval ?? rangeKey}`, HISTORY_TTL, () =>
+      interval
+        ? intervalHistory(symbol, interval, rangeKey)
+        : binance.CRYPTO_SYMBOLS.has(symbol)
         ? binance.history(symbol, rangeKey)
         : isVix(symbol)
         ? vixHistory(rangeKey)
@@ -437,8 +511,36 @@ const EU_INDEX_PROXIES: Record<string, string> = {
   EWI: "Italy (EWI)",
 };
 
+// Israel: TA indexes and shekel crosses straight from TradingView's scanner.
+const IL_TICKERS: Record<string, string> = {
+  "TASE:TA35": "TA-35",
+  "TASE:TA125": "TA-125",
+  "TASE:TA90": "TA-90",
+  "FX_IDC:USDILS": "USD/ILS",
+  "FX_IDC:EURILS": "EUR/ILS",
+  "FX_IDC:GBPILS": "GBP/ILS",
+  "TVC:GOLD": "Gold",
+};
+
 marketRouter.get("/macro", async (req, res) => {
   try {
+    if (req.query.region === "il") {
+      const snap = await cached("macro:il", 3_000, () => tradingview.tickerSnapshot(Object.keys(IL_TICKERS)));
+      if (snap.length === 0) throw new Error("no Israel macro data from any provider");
+      res.json({
+        yields: [],
+        vix: null,
+        indexes: snap.map((q) => ({
+          symbol: q.ticker,
+          label: IL_TICKERS[q.ticker] ?? q.label,
+          price: q.price,
+          changePercent: q.changePercent,
+        })),
+        policyRate: null,
+        inflation: null,
+      });
+      return;
+    }
     if (req.query.region === "eu") {
       const [yieldResults, policyRate, inflation, quotes] = await Promise.all([
         Promise.allSettled(
@@ -499,12 +601,23 @@ marketRouter.get("/macro", async (req, res) => {
   }
 });
 
+// ---- fear & greed index (CNN) ----
+marketRouter.get("/feargreed", async (req, res) => {
+  try {
+    res.json(await cached("feargreed", 60_000, () => feargreed.fetchFearGreed()));
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
 // ---- heatmap + screener over the full market (TradingView scanner — live) ----
 // ?market=eu switches from the whole-US scan to the merged major-European-
 // exchanges scan (see tradingview.europeMarketScan).
 
-function marketParam(req: any): "us" | "eu" {
-  return req.query.market === "eu" ? "eu" : "us";
+type MarketKey = "us" | "eu" | "il";
+
+function marketParam(req: any): MarketKey {
+  return req.query.market === "eu" ? "eu" : req.query.market === "il" ? "il" : "us";
 }
 
 // TradingView reports market cap in each stock's own listing currency (SEK,
@@ -530,7 +643,8 @@ async function eurFxRates(): Promise<Record<string, number>> {
   return rates;
 }
 
-async function marketRows(market: "us" | "eu"): Promise<tradingview.MarketRow[]> {
+async function marketRows(market: MarketKey): Promise<tradingview.MarketRow[]> {
+  if (market === "il") return cached("marketscan:il", 5_000, () => tradingview.israelMarketScan(500));
   if (market === "eu") {
     return cached("marketscan:eu", 5_000, async () => {
       const [rows, fx] = await Promise.all([tradingview.europeMarketScan(1500), eurFxRates()]);

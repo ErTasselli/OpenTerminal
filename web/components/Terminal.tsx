@@ -6,10 +6,18 @@ import Sidebar from "./Sidebar";
 import Workspace from "./Workspace";
 import CommandPalette from "./CommandPalette";
 import { useTerminal } from "../store/terminal";
+import { useLang } from "../lib/i18n";
 
 export default function Terminal() {
   const setCommandOpen = useTerminal((s) => s.setCommandOpen);
   const addWidget = useTerminal((s) => s.addWidget);
+  const lang = useLang((s) => s.lang);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("lang-he", lang === "he");
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === "he" ? "rtl" : "ltr";
+  }, [lang]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

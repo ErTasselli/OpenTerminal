@@ -21,9 +21,42 @@ import CalendarWidget from "./widgets/CalendarWidget";
 import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
+import AlertsWidget from "./widgets/AlertsWidget";
+import FearGreedWidget from "./widgets/FearGreedWidget";
 import WidgetErrorBoundary from "./WidgetErrorBoundary";
+import { useT } from "../lib/i18n";
 
 const Grid = WidthProvider(GridLayout);
+
+/** Scrollable widget body. Once the widget's own content hits its top/bottom
+ * (or doesn't overflow at all), the wheel scrolls the whole workspace instead of
+ * being swallowed — otherwise a page with many widgets can't be scrolled while the
+ * cursor is over a list. Chart canvases keep the wheel for zooming. */
+function WidgetScroll({ children, dir }: { children: React.ReactNode; dir: "rtl" | "ltr" }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.defaultPrevented) return;
+      const main = el.closest("main");
+      if (!main || Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
+      const atEnd = e.deltaY > 0 ? el.scrollTop + el.clientHeight >= el.scrollHeight - 1 : el.scrollTop <= 0;
+      if (!atEnd) return;
+      e.preventDefault();
+      // deltaMode 1/2 (Firefox mouse wheel, some drivers) report lines/pages, not pixels.
+      const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? main.clientHeight : 1;
+      main.scrollBy({ top: e.deltaY * unit, behavior: "instant" });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+  return (
+    <div ref={ref} className="flex-1 overflow-auto min-h-0" dir={dir}>
+      {children}
+    </div>
+  );
+}
 
 function WidgetBody({ widget }: { widget: WidgetInstance }) {
   switch (widget.type) {
@@ -42,10 +75,13 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "insider": return <InsiderWidget widget={widget} />;
     case "tv": return <TvWidget />;
     case "recap": return <RecapWidget />;
+    case "alerts": return <AlertsWidget />;
+    case "feargreed": return <FearGreedWidget />;
   }
 }
 
 function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSymbol: string }) {
+  const t = useT();
   const setWidgetSymbol = useTerminal((s) => s.setWidgetSymbol);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -82,7 +118,7 @@ function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSym
   return (
     <span
       className="ml-2 text-[var(--text)] cursor-pointer hover:text-[var(--amber)]"
-      title="Click to set this widget's ticker"
+      title={t("Click to set this widget's ticker")}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={() => setEditing(true)}
     >
@@ -95,16 +131,28 @@ const TITLES: Record<string, string> = {
   quote: "Quote", chart: "Chart", watchlist: "Watchlist", news: "News",
   heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
-  calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
+  calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap", alerts: "Price Alerts", feargreed: "Fear & Greed Index",
 };
 
 export default function Workspace() {
+  const t = useT();
   const widgets = useTerminal((s) => s.widgets);
   const layout = useTerminal((s) => s.layout);
   const setLayout = useTerminal((s) => s.setLayout);
   const removeWidget = useTerminal((s) => s.removeWidget);
   const toggleLinked = useTerminal((s) => s.toggleLinked);
   const activeSymbol = useTerminal((s) => s.activeSymbol);
+
+  // A widget added from the sidebar lands at the bottom, usually off-screen:
+  // bring it into view instead of leaving the user to hunt for it.
+  const prevCount = useRef(widgets.length);
+  useEffect(() => {
+    if (widgets.length > prevCount.current) {
+      const main = document.querySelector("main");
+      setTimeout(() => main?.scrollTo({ top: main.scrollHeight, behavior: "smooth" }), 50);
+    }
+    prevCount.current = widgets.length;
+  }, [widgets.length]);
 
   const symbolAware = new Set(["quote", "chart", "news", "options", "insider"]);
 
@@ -121,15 +169,15 @@ export default function Workspace() {
       {widgets.map((w) => (
         <div key={w.id}>
           <div className="terminal-panel">
-            <div className="panel-title">
+            <div className="panel-title" dir={t.dir}>
               <span>
-                {TITLES[w.type]}
+                {t(TITLES[w.type])}
                 {symbolAware.has(w.type) && <SymbolTag widget={w} activeSymbol={activeSymbol} />}
               </span>
               <span className="flex gap-2 items-center">
                 {symbolAware.has(w.type) && (
                   <button
-                    title={w.linked ? "Linked to active symbol (click to unlink)" : "Unlinked (click to link)"}
+                    title={w.linked ? t("Linked to active symbol (click to unlink)") : t("Unlinked (click to link)")}
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => toggleLinked(w.id)}
                     className={w.linked ? "text-[var(--amber)]" : "dim"}
@@ -146,11 +194,11 @@ export default function Workspace() {
                 </button>
               </span>
             </div>
-            <div className="flex-1 overflow-auto min-h-0">
-              <WidgetErrorBoundary name={TITLES[w.type]}>
+            <WidgetScroll dir={t.dir}>
+              <WidgetErrorBoundary name={t(TITLES[w.type])}>
                 <WidgetBody widget={w} />
               </WidgetErrorBoundary>
-            </div>
+            </WidgetScroll>
           </div>
         </div>
       ))}

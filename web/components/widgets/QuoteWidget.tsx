@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "../../lib/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet, fmt, fmtBig, pctClass, type Quote } from "../../lib/api";
 import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
@@ -8,6 +9,7 @@ import Flash from "../Flash";
 type ShortVolume = { date: string; shortVolume: number; shortExemptVolume: number; totalVolume: number; shortVolumePercent: number };
 
 export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
+  const t = useT();
   const symbol = useWidgetSymbol(widget);
   const { data, error } = useQuery({
     queryKey: ["quote", symbol],
@@ -21,8 +23,8 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
     staleTime: 3_600_000,
   });
 
-  if (error) return <div className="p-2 down">Error: {(error as Error).message}</div>;
-  if (!data) return <div className="p-2 dim">Loading {symbol}…</div>;
+  if (error) return <div className="p-2 down">{t("Error:")} {(error as Error).message}</div>;
+  if (!data) return <div className="p-2 dim">{t("Loading")} {symbol}…</div>;
 
   const rows: Array<[string, string, string?]> = [
     ["Open", fmt(data.open)],
@@ -60,7 +62,7 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
       <div className="grid grid-cols-2 gap-x-4">
         {rows.map(([label, value]) => (
           <div key={label} className="flex justify-between border-b border-[#161616] py-0.5">
-            <span className="dim">{label}</span>
+            <span className="dim">{t(label)}</span>
             <span>{value}</span>
           </div>
         ))}

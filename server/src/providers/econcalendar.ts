@@ -1,3 +1,4 @@
+import { tfetch } from "../http.js";
 // Economic calendar — schedule, consensus forecast and previous reading come from
 // Forex Factory's free public JSON feed (no key, no signup). That feed never carries
 // the released "actual" value, so for a curated set of the highest-visibility US/EU
@@ -18,7 +19,7 @@ export type EconEvent = {
 type FFRaw = { title: string; country: string; date: string; impact: string; forecast: string; previous: string };
 
 async function fetchWeek(which: "thisweek" | "nextweek"): Promise<FFRaw[]> {
-  const res = await fetch(`https://nfs.faireconomy.media/ff_calendar_${which}.json`, {
+  const res = await tfetch(`https://nfs.faireconomy.media/ff_calendar_${which}.json`, {
     headers: { "User-Agent": "Mozilla/5.0" },
   });
   if (!res.ok) throw new Error(`forexfactory ${res.status} for ${which}`);

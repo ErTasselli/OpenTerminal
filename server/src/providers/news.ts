@@ -1,3 +1,4 @@
+import { tfetch } from "../http.js";
 import { XMLParser } from "fast-xml-parser";
 
 export type NewsItem = {
@@ -12,7 +13,7 @@ const parser = new XMLParser({ ignoreAttributes: false });
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
 
 async function fetchRss(url: string, publisher: string, symbol: string | null): Promise<NewsItem[]> {
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const res = await tfetch(url, { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`rss ${res.status} ${url}`);
   const xml = await res.text();
   const doc = parser.parse(xml);

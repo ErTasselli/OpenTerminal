@@ -1,3 +1,4 @@
+import { tfetch } from "../http.js";
 // FINRA Reg SHO daily short-sale-volume file — free, no key, one file per
 // trading day covering every US-listed symbol. We fetch and parse the whole
 // day's file once (the route layer caches it), then look symbols up from it.
@@ -15,7 +16,7 @@ function fmtDate(d: Date): string {
 }
 
 async function fetchDay(dateStr: string): Promise<Map<string, ShortVolumeRow> | null> {
-  const res = await fetch(`https://cdn.finra.org/equity/regsho/daily/CNMSshvol${dateStr}.txt`, {
+  const res = await tfetch(`https://cdn.finra.org/equity/regsho/daily/CNMSshvol${dateStr}.txt`, {
     headers: { "User-Agent": UA },
   });
   if (!res.ok) return null;

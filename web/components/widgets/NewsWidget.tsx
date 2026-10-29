@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "../../lib/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiGet } from "../../lib/api";
@@ -9,6 +10,7 @@ import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
 type NewsItem = { title: string; link: string; publisher: string; publishedAt: string | null };
 
 export default function NewsWidget({ widget }: { widget: WidgetInstance }) {
+  const t = useT();
   const symbol = useWidgetSymbol(widget);
   const [mode, setMode] = useState<"symbol" | "global">("symbol");
 
@@ -25,10 +27,10 @@ export default function NewsWidget({ widget }: { widget: WidgetInstance }) {
           {symbol}
         </button>
         <button className={`term-btn ${mode === "global" ? "active" : ""}`} onClick={() => setMode("global")}>
-          GLOBAL
+          {t("GLOBAL")}
         </button>
       </div>
-      {isLoading && <div className="p-2 dim">Loading news…</div>}
+      {isLoading && <div className="p-2 dim">{t("Loading news…")}</div>}
       {data.map((n, i) => {
         const body = (
           <>

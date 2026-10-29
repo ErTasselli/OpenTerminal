@@ -10,17 +10,33 @@ import {
   AreaSeries,
   BarSeries,
   type IChartApi,
+  type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { apiGet, fmt, fmtBig, type Candle } from "../../lib/api";
 import { sma, ema, vwap, rsi, macd, bollinger, type Point } from "../../lib/indicators";
 import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
+import { useT } from "../../lib/i18n";
+import { normalizeSymbol } from "../../lib/symbol";
+import { useDrawings, type DrawingKind } from "../../store/drawings";
+import DrawingLayer from "./DrawingLayer";
 
 const RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
+const INTERVALS = [
+  ["1h", "1H"], ["4h", "4H"], ["1d", "D"], ["1w", "W"], ["1M", "M"],
+] as const;
+const DRAW_TOOLS: Array<[DrawingKind, string, string]> = [
+  ["trend", "╱", "Trend line"],
+  ["hline", "─", "Horizontal line"],
+  ["vline", "│", "Vertical line"],
+  ["rect", "▭", "Rectangle"],
+  ["fib", "Fib", "Fibonacci retracement"],
+];
 const CHART_TYPES = ["candles", "bars", "line", "area"] as const;
-const INDICATORS = ["SMA20", "SMA50", "SMA200", "EMA20", "VWAP", "BOLL", "RSI", "MACD"] as const;
+const INDICATORS = ["SMA20", "SMA50", "SMA200", "EMA9", "EMA20", "VWAP", "BOLL", "RSI", "MACD"] as const;
 
 type Range = (typeof RANGES)[number];
+type Interval = (typeof INTERVALS)[number][0];
 type ChartType = (typeof CHART_TYPES)[number];
 type Indicator = (typeof INDICATORS)[number];
 
@@ -28,24 +44,63 @@ const ts = (t: number) => t as UTCTimestamp;
 const toMap = (pts: Point[]) => new Map(pts.map((p) => [p.time, p.value]));
 
 const INDICATOR_COLOR: Record<string, string> = {
-  SMA20: "#ffd966", SMA50: "#4fc3f7", SMA200: "#ba68c8", EMA20: "#ff8a65",
+  SMA20: "#ffd966", SMA50: "#4fc3f7", SMA200: "#ba68c8", EMA9: "#00e5ff", EMA20: "#ff8a65",
   VWAP: "#80cbc4", RSI: "#ff9900", BOLL: "#ff9900", MACD: "#4fc3f7",
 };
 
 export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
+  const t = useT();
   const symbol = useWidgetSymbol(widget);
   const [range, setRange] = useState<Range>("6M");
+  // When set, overrides the range's default candle size (range buttons clear it).
+  const [interval, setInterval_] = useState<Interval | null>(null);
+  // Second symbol drawn on the same axis, rebased to the main series' first close.
+  const [compare, setCompare] = useState("");
+  const [compareDraft, setCompareDraft] = useState("");
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [active, setActive] = useState<Set<Indicator>>(new Set(["SMA20"]));
   const [legend, setLegend] = useState<Candle | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [handle, setHandle] = useState<{ chart: IChartApi; series: ISeriesApi<any> } | null>(null);
+  const [tool, setTool] = useState<DrawingKind | null>(null);
+  const [drawColor, setDrawColor] = useState("#ffd966");
+  const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
+  const drawingCount = useDrawings((s) => s.bySymbol[symbol]?.length ?? 0);
   const chartRef = useRef<IChartApi | null>(null);
 
   const { data: candles, error } = useQuery({
-    queryKey: ["history", symbol, range],
-    queryFn: () => apiGet<Candle[]>(`/api/history/${encodeURIComponent(symbol)}?range=${range}`),
-    refetchInterval: range === "1D" ? 8_000 : 60_000,
+    queryKey: ["history", symbol, range, interval],
+    queryFn: () =>
+      apiGet<Candle[]>(
+        `/api/history/${encodeURIComponent(symbol)}?range=${range}${interval ? `&interval=${interval}` : ""}`
+      ),
+    refetchInterval: !interval && range === "1D" ? 8_000 : 60_000,
   });
+
+  const { data: compareCandles } = useQuery({
+    queryKey: ["history", compare, range, interval],
+    queryFn: () =>
+      apiGet<Candle[]>(
+        `/api/history/${encodeURIComponent(compare)}?range=${range}${interval ? `&interval=${interval}` : ""}`
+      ),
+    enabled: compare !== "" && compare !== symbol,
+    refetchInterval: 60_000,
+  });
+
+  // Rebased overlay points plus the compared symbol's own % move over the window.
+  const compareSeries = useMemo(() => {
+    if (!candles || candles.length === 0 || !compareCandles) return null;
+    const from = candles[0].time;
+    const cmp = compareCandles.filter((c) => c.time >= from);
+    if (cmp.length < 2) return null;
+    // Rebase at the first date both series share, so a younger symbol still starts on the main line.
+    const anchor = candles.find((c) => c.time >= cmp[0].time) ?? candles[0];
+    const scale = anchor.close / cmp[0].close;
+    return {
+      points: cmp.map((c) => ({ time: ts(c.time), value: c.close * scale })),
+      changePercent: (cmp[cmp.length - 1].close / cmp[0].close - 1) * 100,
+    };
+  }, [candles, compareCandles]);
 
   // Fast time -> candle lookup for the crosshair legend, independent of chart type.
   const byTime = useMemo(() => {
@@ -62,6 +117,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       SMA20: active.has("SMA20") ? sma(candles, 20) : null,
       SMA50: active.has("SMA50") ? sma(candles, 50) : null,
       SMA200: active.has("SMA200") ? sma(candles, 200) : null,
+      EMA9: active.has("EMA9") ? ema(candles, 9) : null,
       EMA20: active.has("EMA20") ? ema(candles, 20) : null,
       VWAP: active.has("VWAP") ? vwap(candles) : null,
       RSI: active.has("RSI") ? rsi(candles) : null,
@@ -76,6 +132,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     if (indicatorData.SMA20) maps.SMA20 = toMap(indicatorData.SMA20);
     if (indicatorData.SMA50) maps.SMA50 = toMap(indicatorData.SMA50);
     if (indicatorData.SMA200) maps.SMA200 = toMap(indicatorData.SMA200);
+    if (indicatorData.EMA9) maps.EMA9 = toMap(indicatorData.EMA9);
     if (indicatorData.EMA20) maps.EMA20 = toMap(indicatorData.EMA20);
     if (indicatorData.VWAP) maps.VWAP = toMap(indicatorData.VWAP);
     if (indicatorData.RSI) maps.RSI = toMap(indicatorData.RSI);
@@ -97,7 +154,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     const t = legend.time;
     const get = (key: string) => indicatorMaps[key]?.get(t);
     const rows: Array<{ label: string; value: string; color: string }> = [];
-    for (const key of ["SMA20", "SMA50", "SMA200", "EMA20", "VWAP"] as const) {
+    for (const key of ["SMA20", "SMA50", "SMA200", "EMA9", "EMA20", "VWAP"] as const) {
       const v = get(key);
       if (v !== undefined) rows.push({ label: key, value: fmt(v), color: INDICATOR_COLOR[key] });
     }
@@ -134,7 +191,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       layout: { background: { color: "#0a0a0a" }, textColor: "#808080", fontSize: 10, attributionLogo: false },
       grid: { vertLines: { color: "#1a1a1a" }, horzLines: { color: "#1a1a1a" } },
       crosshair: { mode: 0 },
-      timeScale: { borderColor: "#262626", timeVisible: range === "1D" || range === "5D" },
+      timeScale: { borderColor: "#262626", timeVisible: interval ? interval === "1h" || interval === "4h" : range === "1D" || range === "5D" },
       rightPriceScale: { borderColor: "#262626" },
       autoSize: true,
       // Mouse-wheel is left free for page scrolling — zoom via drag, pinch, or the range buttons instead.
@@ -146,26 +203,24 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     const upColor = "#00c853";
     const downColor = "#ff3d3d";
 
+    let main: ISeriesApi<any>;
     if (chartType === "candles") {
-      chart
-        .addSeries(CandlestickSeries, {
-          upColor, downColor, borderUpColor: upColor, borderDownColor: downColor,
-          wickUpColor: upColor, wickDownColor: downColor,
-        })
-        .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+      main = chart.addSeries(CandlestickSeries, {
+        upColor, downColor, borderUpColor: upColor, borderDownColor: downColor,
+        wickUpColor: upColor, wickDownColor: downColor,
+      });
+      main.setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
     } else if (chartType === "bars") {
-      chart
-        .addSeries(BarSeries, { upColor, downColor })
-        .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+      main = chart.addSeries(BarSeries, { upColor, downColor });
+      main.setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
     } else if (chartType === "line") {
-      chart
-        .addSeries(LineSeries, { color: "#ff9900", lineWidth: 1 })
-        .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
+      main = chart.addSeries(LineSeries, { color: "#ff9900", lineWidth: 1 });
+      main.setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     } else {
-      chart
-        .addSeries(AreaSeries, { lineColor: "#ff9900", topColor: "rgba(255,153,0,0.25)", bottomColor: "rgba(255,153,0,0)" })
-        .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
+      main = chart.addSeries(AreaSeries, { lineColor: "#ff9900", topColor: "rgba(255,153,0,0.25)", bottomColor: "rgba(255,153,0,0)" });
+      main.setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
     }
+    setHandle({ chart, series: main });
 
     // volume histogram on its own scale at the bottom of the main pane
     const vol = chart.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" } });
@@ -181,12 +236,19 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     if (indicatorData?.SMA20) overlay(indicatorData.SMA20, INDICATOR_COLOR.SMA20);
     if (indicatorData?.SMA50) overlay(indicatorData.SMA50, INDICATOR_COLOR.SMA50);
     if (indicatorData?.SMA200) overlay(indicatorData.SMA200, INDICATOR_COLOR.SMA200);
+    if (indicatorData?.EMA9) overlay(indicatorData.EMA9, INDICATOR_COLOR.EMA9);
     if (indicatorData?.EMA20) overlay(indicatorData.EMA20, INDICATOR_COLOR.EMA20);
     if (indicatorData?.VWAP) overlay(indicatorData.VWAP, INDICATOR_COLOR.VWAP);
     if (indicatorData?.BOLL) {
       overlay(indicatorData.BOLL.upper, "rgba(255,153,0,0.5)");
       overlay(indicatorData.BOLL.middle, "rgba(255,153,0,0.8)");
       overlay(indicatorData.BOLL.lower, "rgba(255,153,0,0.5)");
+    }
+
+    if (compareSeries) {
+      chart
+        .addSeries(LineSeries, { color: "#e040fb", lineWidth: 2, priceLineVisible: false, lastValueVisible: false })
+        .setData(compareSeries.points);
     }
 
     let paneIdx = 1;
@@ -219,10 +281,11 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
 
     chart.timeScale().fitContent();
     return () => {
+      setHandle(null);
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, chartType, indicatorData, range, byTime]);
+  }, [candles, chartType, indicatorData, range, interval, byTime, compareSeries]);
 
   const toggleIndicator = (ind: Indicator) =>
     setActive((prev) => {
@@ -236,16 +299,101 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     <div className="flex flex-col h-full">
       <div className="flex gap-1 p-1 flex-wrap shrink-0">
         {RANGES.map((r) => (
-          <button key={r} className={`term-btn ${range === r ? "active" : ""}`} onClick={() => setRange(r)}>
+          <button
+            key={r}
+            className={`term-btn ${!interval && range === r ? "active" : ""}`}
+            onClick={() => {
+              setRange(r);
+              setInterval_(null);
+            }}
+          >
             {r}
           </button>
         ))}
         <span className="w-2" />
-        {CHART_TYPES.map((t) => (
-          <button key={t} className={`term-btn ${chartType === t ? "active" : ""}`} onClick={() => setChartType(t)}>
-            {t.toUpperCase()}
+        {INTERVALS.map(([value, label]) => (
+          <button
+            key={value}
+            title={`${t("Candle size")}: ${label}`}
+            className={`term-btn ${interval === value ? "active" : ""}`}
+            onClick={() => setInterval_(interval === value ? null : value)}
+          >
+            {label}
           </button>
         ))}
+        <span className="w-2" />
+        {CHART_TYPES.map((ct) => (
+          <button key={ct} className={`term-btn ${chartType === ct ? "active" : ""}`} onClick={() => setChartType(ct)}>
+            {t(ct.toUpperCase())}
+          </button>
+        ))}
+        <span className="w-2" />
+        {DRAW_TOOLS.map(([kind, glyph, label]) => (
+          <button
+            key={kind}
+            title={t(label)}
+            className={`term-btn ${tool === kind ? "active" : ""}`}
+            onClick={() => {
+              setSelectedDrawing(null);
+              setTool(tool === kind ? null : kind);
+            }}
+          >
+            {glyph}
+          </button>
+        ))}
+        <input
+          type="color"
+          title={selectedDrawing ? t("Change selected drawing color") : t("Drawing color")}
+          value={drawColor}
+          onChange={(e) => {
+            setDrawColor(e.target.value);
+            if (selectedDrawing) useDrawings.getState().update(symbol, selectedDrawing, { color: e.target.value });
+          }}
+          className="!w-6 !h-5 !p-0 cursor-pointer bg-transparent"
+        />
+        {selectedDrawing && (
+          <button
+            className="term-btn"
+            onClick={() => {
+              useDrawings.getState().remove(symbol, selectedDrawing);
+              setSelectedDrawing(null);
+            }}
+          >
+            {t("Delete")}
+          </button>
+        )}
+        {drawingCount > 0 && (
+          <button className="term-btn" title={t("Clear all drawings")} onClick={() => useDrawings.getState().clear(symbol)}>
+            {t("Clear")}
+          </button>
+        )}
+        <span className="w-2" />
+        <input
+          className="w-20"
+          dir="ltr"
+          placeholder={t("Compare…")}
+          title={t("Overlay another symbol, rebased to this chart's start (Enter)")}
+          value={compareDraft}
+          onChange={(e) => setCompareDraft(e.target.value.toUpperCase())}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            const sym = normalizeSymbol(compareDraft);
+            setCompare(sym ?? "");
+            if (!sym) setCompareDraft("");
+          }}
+        />
+        {compare && (
+          <button
+            className="term-btn active"
+            title={t("Remove comparison")}
+            onClick={() => {
+              setCompare("");
+              setCompareDraft("");
+            }}
+          >
+            {compare} {compareSeries ? `${compareSeries.changePercent >= 0 ? "+" : ""}${fmt(compareSeries.changePercent, 1)}%` : "…"} ✕
+          </button>
+        )}
         <span className="w-2" />
         {INDICATORS.map((ind) => (
           <button key={ind} className={`term-btn ${active.has(ind) ? "active" : ""}`} onClick={() => toggleIndicator(ind)}>
@@ -253,8 +401,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
           </button>
         ))}
       </div>
-      {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
-      <div className="relative flex-1 min-h-0">
+      {error && <div className="p-2 down">{t("Error:")} {(error as Error).message}</div>}
+      <div className="relative flex-1 min-h-0" dir="ltr">
         {legend && (
           <div className="absolute top-1 left-2 z-10 flex flex-col gap-0.5 text-[11px] pointer-events-none bg-[rgba(10,10,10,0.7)] px-2 py-1 rounded max-w-[95%]">
             <div className="flex gap-3">
@@ -262,7 +410,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
               <span className="dim">H <span className="up">{fmt(legend.high)}</span></span>
               <span className="dim">L <span className="down">{fmt(legend.low)}</span></span>
               <span className="dim">C <span className={legend.close >= legend.open ? "up" : "down"}>{fmt(legend.close)}</span></span>
-              <span className="dim">Vol <span className="text-[var(--text)]">{fmtBig(legend.volume)}</span></span>
+              <span className="dim">{t("Vol")} <span className="text-[var(--text)]">{fmtBig(legend.volume)}</span></span>
             </div>
             {indicatorRows.length > 0 && (
               <div className="flex gap-3 flex-wrap">
@@ -276,6 +424,19 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
           </div>
         )}
         <div ref={containerRef} className="w-full h-full" />
+        {handle && candles && candles.length > 1 && (
+          <DrawingLayer
+            chart={handle.chart}
+            series={handle.series}
+            candles={candles}
+            symbol={symbol}
+            tool={tool}
+            color={drawColor}
+            selected={selectedDrawing}
+            onSelect={setSelectedDrawing}
+            onToolDone={() => setTool(null)}
+          />
+        )}
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import { tfetch } from "../http.js";
 // SEC EDGAR — insider transactions (Form 4), straight from the primary source.
 // Free, no key, no rate-limit games (SEC just asks for an identifying User-Agent
 // and stays under ~10 req/s, both trivially satisfied here).
@@ -12,7 +13,7 @@ const UA = `OpenTerminal ${process.env.SEC_EDGAR_CONTACT ?? "ertassellireplay@gm
 const parser = new XMLParser({ ignoreAttributes: false });
 
 async function edgarFetch(url: string): Promise<any> {
-  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
+  const res = await tfetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
   if (!res.ok) throw new Error(`sec edgar ${res.status} for ${url}`);
   return res.json();
 }
@@ -76,7 +77,7 @@ async function parseForm4(cik: string, filing: FilingRef): Promise<InsiderTransa
   // the raw data XML sits at the accession folder root under its own filename.
   const filename = filing.primaryDocument.split("/").pop();
   const url = `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accessionNoDashes}/${filename}`;
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const res = await tfetch(url, { headers: { "User-Agent": UA } });
   if (!res.ok) return [];
   const xml = await res.text();
   const doc = parser.parse(xml)?.ownershipDocument;

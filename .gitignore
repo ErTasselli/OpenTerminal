@@ -11,3 +11,5 @@ out/
 # Database
 data/*.db*
 data/.api-key
+data/telegram.json
+data/ai.json

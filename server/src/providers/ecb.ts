@@ -1,3 +1,4 @@
+import { tfetch } from "../http.js";
 // ECB Statistical Data Warehouse (SDW) — public CSV endpoint, no API key
 // required. Mirrors the FRED provider's shape for euro-area macro data.
 //
@@ -9,7 +10,7 @@ export type SeriesPoint = { date: string; value: number };
 
 export async function series(flowRef: string, key: string, lastN = 260): Promise<SeriesPoint[]> {
   const url = `https://data-api.ecb.europa.eu/service/data/${flowRef}/${key}?format=csvdata&lastNObservations=${lastN}`;
-  const res = await fetch(url);
+  const res = await tfetch(url);
   if (!res.ok) throw new Error(`ecb ${res.status} for ${flowRef}/${key}`);
   const text = await res.text();
   const lines = text.trim().split("\n");

@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "../../lib/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiGet, fmt, fmtBig, pctClass } from "../../lib/api";
@@ -13,8 +14,9 @@ type Row = {
 };
 
 export default function ScreenerWidget() {
+  const t = useT();
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
-  const [market, setMarket] = useState<"us" | "eu">("us");
+  const [market, setMarket] = useState<"us" | "eu" | "il">("us");
   const [sector, setSector] = useState("");
   const [changeMin, setChangeMin] = useState("");
   const [marketCapMinB, setMarketCapMinB] = useState("");
@@ -51,7 +53,7 @@ export default function ScreenerWidget() {
       }}
       className={sort === key ? "!text-[var(--amber)]" : ""}
     >
-      {label} {sort === key ? (dir === "desc" ? "▼" : "▲") : ""}
+      {t(label)} {sort === key ? (dir === "desc" ? "▼" : "▲") : ""}
     </th>
   );
 
@@ -59,30 +61,30 @@ export default function ScreenerWidget() {
     <div>
       <div className="flex gap-2 p-1 flex-wrap items-center">
         <div className="flex gap-1">
-          {(["us", "eu"] as const).map((m) => (
+          {(["us", "eu", "il"] as const).map((m) => (
             <button key={m} className={`term-btn ${market === m ? "active" : ""}`} onClick={() => setMarket(m)}>
               {m.toUpperCase()}
             </button>
           ))}
         </div>
         <select value={sector} onChange={(e) => setSector(e.target.value)}>
-          <option value="">All sectors</option>
+          <option value="">{t("All sectors")}</option>
           {sectors.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <input className="w-20" placeholder="Chg% min" value={changeMin} onChange={(e) => setChangeMin(e.target.value)} />
-        <input className="w-24" placeholder="MCap min ($B)" value={marketCapMinB} onChange={(e) => setMarketCapMinB(e.target.value)} />
-        <input className="w-24" placeholder="Vol min (M)" value={volumeMinM} onChange={(e) => setVolumeMinM(e.target.value)} />
-        <span className="dim ml-auto">{isLoading ? "…" : `${data.length} results`}</span>
+        <input className="w-20" placeholder={t("Chg% min")} value={changeMin} onChange={(e) => setChangeMin(e.target.value)} />
+        <input className="w-24" placeholder={t("MCap min ($B)")} value={marketCapMinB} onChange={(e) => setMarketCapMinB(e.target.value)} />
+        <input className="w-24" placeholder={t("Vol min (M)")} value={volumeMinM} onChange={(e) => setVolumeMinM(e.target.value)} />
+        <span className="dim ml-auto">{isLoading ? "…" : `${data.length} ${t("results")}`}</span>
       </div>
-      {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
+      {error && <div className="p-2 down">{t("Error:")} {(error as Error).message}</div>}
       <table className="data-table">
         <thead>
           <tr>
             {th("symbol", "Sym")}
-            <th>Name</th>
-            <th>Sector</th>
+            <th>{t("Name")}</th>
+            <th>{t("Sector")}</th>
             {th("price", "Last")}
             {th("changePercent", "Chg%")}
             {th("volume", "Vol")}
@@ -93,8 +95,8 @@ export default function ScreenerWidget() {
           {data.map((q) => (
             <tr key={q.symbol} onClick={() => setActiveSymbol(q.symbol)}>
               <td className="font-bold">{q.symbol}</td>
-              <td className="!text-left max-w-40 truncate">{q.name}</td>
-              <td className="!text-left dim">{q.sector}</td>
+              <td className="!text-start max-w-40 truncate">{q.name}</td>
+              <td className="!text-start dim">{t(q.sector)}</td>
               <td><Flash value={q.price}>{fmt(q.price)}</Flash></td>
               <td className={pctClass(q.changePercent)}>
                 <Flash value={q.changePercent}>{fmt(q.changePercent)}%</Flash>

@@ -1,3 +1,4 @@
+import { tfetch } from "../http.js";
 // TradingView's public scanner/search endpoints — used by tradingview.com's
 // own screener widget and symbol search box. No API key. Requires a
 // believable Referer/Origin or the edge returns 403.
@@ -49,7 +50,7 @@ export async function scanFundamentals(
   const out = new Map<string, Fundamentals>();
   if (tickers.length === 0) return out;
 
-  const res = await fetch("https://scanner.tradingview.com/america/scan", {
+  const res = await tfetch("https://scanner.tradingview.com/america/scan", {
     method: "POST",
     headers: HEADERS,
     body: JSON.stringify({ symbols: { tickers }, columns: COLUMNS }),
@@ -89,7 +90,7 @@ export type MarketRow = {
 
 /** Live top-N-by-market-cap snapshot across every US exchange, one request. */
 export async function marketScan(limit = 1500): Promise<MarketRow[]> {
-  const res = await fetch("https://scanner.tradingview.com/america/scan", {
+  const res = await tfetch("https://scanner.tradingview.com/america/scan", {
     method: "POST",
     headers: HEADERS,
     body: JSON.stringify({
@@ -147,7 +148,7 @@ async function scanOneEuropeMarket(
   m: { region: string; exchange: string; country: string },
   perMarketLimit: number
 ): Promise<MarketRow[]> {
-  const res = await fetch(`https://scanner.tradingview.com/${m.region}/scan`, {
+  const res = await tfetch(`https://scanner.tradingview.com/${m.region}/scan`, {
     method: "POST",
     headers: HEADERS,
     body: JSON.stringify({
@@ -217,7 +218,7 @@ const EARNINGS_COLUMNS = ["earnings_release_next_date", "earnings_release_date",
 export async function earningsCalendar(symbols: string[]): Promise<EarningsInfo[]> {
   const exchanges = ["NASDAQ", "NYSE", "AMEX"];
   const tickers = symbols.flatMap((s) => exchanges.map((ex) => `${ex}:${s}`));
-  const res = await fetch("https://scanner.tradingview.com/america/scan", {
+  const res = await tfetch("https://scanner.tradingview.com/america/scan", {
     method: "POST",
     headers: HEADERS,
     body: JSON.stringify({ symbols: { tickers }, columns: EARNINGS_COLUMNS }),
@@ -275,7 +276,7 @@ export async function search(query: string): Promise<SearchResult[]> {
   const url = `https://symbol-search.tradingview.com/symbol_search/v3/?text=${encodeURIComponent(
     query
   )}&hl=1&lang=en&search_type=undefined&domain=production&sort_by_country=US`;
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await tfetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`tradingview search ${res.status}`);
   const json = await res.json();
   const rows: any[] = json?.symbols ?? [];
@@ -296,4 +297,37 @@ export async function search(query: string): Promise<SearchResult[]> {
         type: r.type ?? "",
       };
     });
+}
+
+/** Tel Aviv Stock Exchange: Israeli-domiciled companies only (the "israel"
+ * region also lists US cross-listings such as Palo Alto). TASE quotes prices in
+ * agorot, so close is divided by 100 to show shekels; symbols get Yahoo's
+ * ".TA" suffix so clicking a row opens a chart through the normal providers. */
+export async function israelMarketScan(limit = 500): Promise<MarketRow[]> {
+  const rows = await scanOneEuropeMarket({ region: "israel", exchange: "TASE", country: "Israel" }, limit);
+  return rows.map((r) => ({
+    ...r,
+    symbol: `${r.symbol}.TA`,
+    price: r.price !== null ? r.price / 100 : null,
+    currency: "ILS",
+  }));
+}
+
+export type TickerSnapshot = { ticker: string; label: string; price: number | null; changePercent: number | null };
+
+/** Snapshot of arbitrary TradingView tickers (indexes, FX pairs) in one request. */
+export async function tickerSnapshot(tickers: string[]): Promise<TickerSnapshot[]> {
+  const res = await tfetch("https://scanner.tradingview.com/global/scan", {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ symbols: { tickers }, columns: ["description", "close", "change"] }),
+  });
+  if (!res.ok) throw new Error(`tradingview snapshot ${res.status}`);
+  const json = await res.json();
+  const rows: Array<{ s: string; d: any[] }> = json?.data ?? [];
+  const byTicker = new Map(rows.map((r) => [r.s, r.d]));
+  return tickers.flatMap((ticker) => {
+    const d = byTicker.get(ticker);
+    return d ? [{ ticker, label: d[0] ?? ticker, price: d[1] ?? null, changePercent: d[2] ?? null }] : [];
+  });
 }

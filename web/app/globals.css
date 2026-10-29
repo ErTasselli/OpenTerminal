@@ -17,14 +17,15 @@ html,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", "DejaVu Sans Mono", var(--font-he),
+    "Noto Sans Hebrew", "Arial Hebrew", sans-serif, monospace;
   font-size: 12px;
   overflow: hidden;
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
   background: var(--panel);
@@ -150,4 +151,18 @@ button.term-btn.active {
 }
 .react-grid-item > .react-resizable-handle::after {
   border-color: var(--amber-dim) !important;
+}
+
+/* In RTL mode, keep signs/percent marks on numbers in logical order while
+   Hebrew text cells still flow right-to-left (first strong character wins). */
+[dir="rtl"] .data-table td,
+[dir="rtl"] .data-table th {
+  unicode-bidi: plaintext;
+}
+
+/* Hebrew is harder to read at terminal sizes: a little larger, slightly bolder. */
+html.lang-he body {
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0;
 }

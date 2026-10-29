@@ -1,3 +1,4 @@
+import { tfetch } from "../http.js";
 import type { Candle, Quote } from "./yahoo.js";
 
 /** Map a Yahoo-style symbol to Stooq's convention (US equities get a .us suffix). */
@@ -10,7 +11,7 @@ function stooqSymbol(symbol: string): string {
 
 export async function history(symbol: string): Promise<Candle[]> {
   const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol(symbol))}&i=d`;
-  const res = await fetch(url);
+  const res = await tfetch(url);
   if (!res.ok) throw new Error(`stooq ${res.status}`);
   const text = await res.text();
   const lines = text.trim().split("\n");
@@ -28,7 +29,7 @@ export async function history(symbol: string): Promise<Candle[]> {
 
 export async function quote(symbol: string): Promise<Quote> {
   const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol(symbol))}&f=sd2t2ohlcv&h&e=csv`;
-  const res = await fetch(url);
+  const res = await tfetch(url);
   if (!res.ok) throw new Error(`stooq ${res.status}`);
   const lines = (await res.text()).trim().split("\n");
   if (lines.length < 2) throw new Error("stooq: empty quote");

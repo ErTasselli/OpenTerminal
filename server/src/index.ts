@@ -3,9 +3,11 @@ import cors from "cors";
 import { marketRouter } from "./routes/market.js";
 import { portfolioRouter } from "./routes/portfolio.js";
 import { aiRouter } from "./routes/ai.js";
+import { telegramRouter } from "./routes/telegram.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
+import { isConfigured, loadAiConfig } from "./aiConfig.js";
 
 const app = express();
 
@@ -34,9 +36,14 @@ app.use(express.json());
 // caller could otherwise repeat the multi-provider fan-out in market.ts (up to
 // hundreds of outbound calls per request — see getQuotes) fast enough to get
 // this deployment's IP rate-limited or banned by Nasdaq/Yahoo/Stooq/SEC.
-app.use("/api", rateLimit({ windowMs: 60_000, max: 240 }), marketRouter);
+// The dashboard polls many widgets once per second (quotes, watchlist, macro,
+// crypto), which alone is ~240+ req/min, so the ceiling must sit well above that;
+// responses are served from the server-side cache, so upstream load stays bounded.
+const marketRateMax = Number(process.env.MARKET_RATE_LIMIT) || 1800;
+app.use("/api", rateLimit({ windowMs: 60_000, max: marketRateMax }), marketRouter);
 // Portfolio data and the paid AI endpoint require a shared secret; see auth.ts.
 app.use("/api/portfolios", requireApiKey, portfolioRouter);
+app.use("/api/telegram", requireApiKey, rateLimit({ windowMs: 60_000, max: 30 }), telegramRouter);
 app.use(
   "/api/ai",
   requireApiKey,
@@ -49,7 +56,7 @@ app.get("/api/status", (_req, res) => {
     ok: true,
     time: new Date().toISOString(),
     providers: allStats(),
-    ai: Boolean(process.env.ANTHROPIC_API_KEY),
+    ai: isConfigured(loadAiConfig()),
   });
 });
 

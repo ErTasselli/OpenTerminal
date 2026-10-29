@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "../../lib/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiGet, apiPost, apiDelete, fmt, pctClass, type Quote } from "../../lib/api";
@@ -10,6 +11,7 @@ type Position = { symbol: string; quantity: number; avgCost: number; realizedPnl
 type Tx = { id: number; symbol: string; side: string; quantity: number; price: number; executed_at: string };
 
 export default function PortfolioWidget() {
+  const t = useT();
   const qc = useQueryClient();
   const [portfolioId, setPortfolioId] = useState<number | null>(null);
   const [showTx, setShowTx] = useState(false);
@@ -79,12 +81,12 @@ export default function PortfolioWidget() {
           ))}
         </select>
         <button className={`term-btn ${showTx ? "active" : ""}`} onClick={() => setShowTx(!showTx)}>
-          TRANSACTIONS
+          {t("TRANSACTIONS")}
         </button>
-        <span className="ml-auto">
-          MV <span className="amber">{fmt(totals.marketValue)}</span>{" "}
-          <span className="dim">Unrl</span> <span className={pctClass(unrealized)}>{fmt(unrealized)}</span>{" "}
-          <span className="dim">Rlzd</span> <span className={pctClass(totals.realized)}>{fmt(totals.realized)}</span>
+        <span className="ms-auto">
+          {t("MV")} <span className="amber">{fmt(totals.marketValue)}</span>{" "}
+          <span className="dim">{t("Unrl")}</span> <span className={pctClass(unrealized)}>{fmt(unrealized)}</span>{" "}
+          <span className="dim">{t("Rlzd")}</span> <span className={pctClass(totals.realized)}>{fmt(totals.realized)}</span>
         </span>
       </div>
 
@@ -95,20 +97,20 @@ export default function PortfolioWidget() {
           if (form.symbol && form.quantity && form.price) addTx.mutate();
         }}
       >
-        <input className="w-20" placeholder="Ticker" value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })} />
+        <input className="w-20" placeholder={t("Ticker")} value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })} />
         <select value={form.side} onChange={(e) => setForm({ ...form, side: e.target.value })}>
-          <option>BUY</option><option>SELL</option>
+          <option value="BUY">{t("BUY")}</option><option value="SELL">{t("SELL")}</option>
         </select>
-        <input className="w-20" placeholder="Qty" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
-        <input className="w-24" placeholder="Price" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
-        <button className="term-btn" type="submit">ADD</button>
+        <input className="w-20" placeholder={t("Qty")} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+        <input className="w-24" placeholder={t("Price")} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+        <button className="term-btn" type="submit">{t("ADD")}</button>
         {addTx.error && <span className="down">{(addTx.error as Error).message}</span>}
       </form>
 
       {!showTx ? (
         <table className="data-table">
           <thead>
-            <tr><th>Sym</th><th>Qty</th><th>Avg Cost</th><th>Last</th><th>Mkt Val</th><th>Unrl PnL</th><th>Rlzd PnL</th></tr>
+            <tr><th>{t("Sym")}</th><th>{t("Qty")}</th><th>{t("Avg Cost")}</th><th>{t("Last")}</th><th>{t("Mkt Val")}</th><th>{t("Unrl PnL")}</th><th>{t("Rlzd PnL")}</th></tr>
           </thead>
           <tbody>
             {positions.map((p) => {
@@ -133,21 +135,21 @@ export default function PortfolioWidget() {
       ) : (
         <table className="data-table">
           <thead>
-            <tr><th>Date</th><th>Sym</th><th>Side</th><th>Qty</th><th>Price</th><th></th></tr>
+            <tr><th>{t("Date")}</th><th>{t("Sym")}</th><th>{t("Side")}</th><th>{t("Qty")}</th><th>{t("Price")}</th><th></th></tr>
           </thead>
           <tbody>
-            {txs.map((t) => (
-              <tr key={t.id}>
-                <td className="!text-left dim">{new Date(t.executed_at).toLocaleDateString()}</td>
-                <td className="font-bold">{t.symbol}</td>
-                <td className={t.side === "BUY" ? "up" : "down"}>{t.side}</td>
-                <td>{fmt(t.quantity, 4)}</td>
-                <td>{fmt(t.price)}</td>
+            {txs.map((tx) => (
+              <tr key={tx.id}>
+                <td className="!text-start dim">{new Date(tx.executed_at).toLocaleDateString()}</td>
+                <td className="font-bold">{tx.symbol}</td>
+                <td className={tx.side === "BUY" ? "up" : "down"}>{t(tx.side)}</td>
+                <td>{fmt(tx.quantity, 4)}</td>
+                <td>{fmt(tx.price)}</td>
                 <td>
                   <button
                     className="dim hover:text-[var(--down)]"
                     onClick={async () => {
-                      await apiDelete(`/api/portfolios/${pid}/transactions/${t.id}`);
+                      await apiDelete(`/api/portfolios/${pid}/transactions/${tx.id}`);
                       qc.invalidateQueries({ queryKey: ["positions", pid] });
                       qc.invalidateQueries({ queryKey: ["transactions", pid] });
                     }}
