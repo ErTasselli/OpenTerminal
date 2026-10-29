@@ -12,6 +12,13 @@ type Portfolio = { id: number; name: string };
 // A lightweight slice of GET /api/portfolios/:id/positions (see PortfolioWidget.tsx for the
 // full shape) — just enough for the assistant to ground answers, not the full options fields.
 type PositionSnapshot = { symbol: string; instrumentType: string; quantity: number; avgCost: number };
+// A lightweight slice of GET /api/portfolios/:id/transactions, capped to the most recent
+// MAX_RECENT_TRANSACTIONS rows — gives the model transaction ids so it can target an
+// existing row via the propose_transaction Tool Call's EDIT/DELETE operations (ADR-0002:
+// the model never writes to `transactions` directly, only proposes a Pending Action).
+type TransactionSnapshot = { id: number; symbol: string; side: string; quantity: number; price: number; executed_at: string };
+
+const MAX_RECENT_TRANSACTIONS = 20;
 
 export default function AiWidget() {
   const activeSymbol = useTerminal((s) => s.activeSymbol);
@@ -22,18 +29,26 @@ export default function AiWidget() {
 
   const chat = useMutation({
     mutationFn: async (userText: string) => {
-      // Every turn auto-injects a lightweight positions snapshot and the client-side
-      // watchlist as context — best-effort, same as the quote fetch: either one failing
-      // never blocks the chat itself. Run both independent lookups concurrently rather
-      // than serially, so one slow/failing fetch doesn't add to the other's latency.
+      // Every turn auto-injects a lightweight positions snapshot, a capped recent-transactions
+      // snapshot (so the model can target an existing row's id for propose_transaction's
+      // EDIT/DELETE operations), and the client-side watchlist as context — best-effort, same
+      // as the quote fetch: any one of these failing never blocks the chat itself. Run all
+      // three independent lookups concurrently rather than serially, so one slow/failing
+      // fetch doesn't add to the others' latency.
       const context: Record<string, unknown> = { activeSymbol, watchlist };
-      const [quoteResult, positionsResult] = await Promise.allSettled([
+      const [quoteResult, positionsResult, transactionsResult] = await Promise.allSettled([
         apiGet<Quote[]>(`/api/quotes?symbols=${encodeURIComponent(activeSymbol)}`),
         (async () => {
           const portfolios = await apiGet<Portfolio[]>("/api/portfolios");
           const pid = portfolios[0]?.id;
           if (!pid) return [];
           return apiGet<PositionSnapshot[]>(`/api/portfolios/${pid}/positions`);
+        })(),
+        (async () => {
+          const portfolios = await apiGet<Portfolio[]>("/api/portfolios");
+          const pid = portfolios[0]?.id;
+          if (!pid) return [];
+          return apiGet<TransactionSnapshot[]>(`/api/portfolios/${pid}/transactions`);
         })(),
       ]);
       if (quoteResult.status === "fulfilled") context.quote = quoteResult.value[0];
@@ -46,6 +61,20 @@ export default function AiWidget() {
             avgCost: p.avgCost,
           })
         );
+      }
+      if (transactionsResult.status === "fulfilled" && transactionsResult.value.length > 0) {
+        context.recentTransactions = transactionsResult.value
+          .slice(0, MAX_RECENT_TRANSACTIONS)
+          .map(
+            (t): TransactionSnapshot => ({
+              id: t.id,
+              symbol: t.symbol,
+              side: t.side,
+              quantity: t.quantity,
+              price: t.price,
+              executed_at: t.executed_at,
+            })
+          );
       }
 
       const next = [...messages, { role: "user" as const, content: userText }];
