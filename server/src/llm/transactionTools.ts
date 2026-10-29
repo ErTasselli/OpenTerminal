@@ -3,6 +3,7 @@
 // Action, which a human must confirm or reject. Clones the NEWS_SEARCH_TOOL shape
 // in tools.ts (one exported ToolDef + one exported run...Tool function).
 import { db } from "../db.js";
+import { writeAuditLog } from "../audit.js";
 import { txSchema } from "../schemas/transaction.js";
 import type { ToolDef } from "./types.js";
 
@@ -50,7 +51,13 @@ function insertPendingAction(portfolioId: number, operation: "ADD" | "EDIT" | "D
   const info = db
     .prepare("INSERT INTO pending_actions (portfolio_id, operation, transaction_id, payload) VALUES (?, ?, ?, ?)")
     .run(portfolioId, operation, transactionId, JSON.stringify(payload));
-  return Number(info.lastInsertRowid);
+  const pendingActionId = Number(info.lastInsertRowid);
+  writeAuditLog({
+    eventType: "pending_action",
+    summary: `proposed ${operation} (pending action #${pendingActionId})`,
+    detail: { action: "proposed", operation, pendingActionId, transactionId, payload },
+  });
+  return pendingActionId;
 }
 
 /**

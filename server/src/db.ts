@@ -78,6 +78,31 @@ CREATE TABLE IF NOT EXISTS memory_entries (
   category TEXT CHECK (category IS NULL OR category IN ('preference','watchlist','research-note')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- An Audit Log Entry (see CONTEXT.md): an append-only record of one unit of AI
+-- activity -- a full chat transcript, a Tool Call, a Pending Action lifecycle
+-- event, or a Memory Entry write -- plus call metadata and failures. No row
+-- here is ever updated or deleted, including by the user (#23); the two
+-- triggers below enforce that at the DB layer, not just by omitting UPDATE/
+-- DELETE routes. The detail column is a JSON blob whose shape varies per
+-- event_type, documented at each write site (see server/src/audit.ts).
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  event_type TEXT NOT NULL CHECK (event_type IN ('chat','tool_call','pending_action','memory_write','error')),
+  summary TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER
+);
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+BEGIN
+  SELECT RAISE(ABORT, 'audit_log is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+BEGIN
+  SELECT RAISE(ABORT, 'audit_log is append-only');
+END;
 `);
 
 // Migration for pre-existing DBs created before the option-position / Pending

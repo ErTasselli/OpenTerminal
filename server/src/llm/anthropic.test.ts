@@ -156,4 +156,33 @@ describe("anthropicProvider", () => {
 
     expect(result.toolCalls).toBeUndefined();
   });
+
+  it("maps response.usage.{input,output}_tokens into neutral usage", async () => {
+    mockFetchOnce(200, {
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 42, output_tokens: 17 },
+    });
+
+    const result = await anthropicProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
+
+    expect(result.usage).toEqual({ inputTokens: 42, outputTokens: 17 });
+  });
+
+  it("still maps usage on a refusal response", async () => {
+    mockFetchOnce(200, { stop_reason: "refusal", content: [], usage: { input_tokens: 5, output_tokens: 1 } });
+
+    const result = await anthropicProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
+
+    expect(result.refused).toBe(true);
+    expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 1 });
+  });
+
+  it("omits usage when the response has no usage field", async () => {
+    mockFetchOnce(200, { stop_reason: "end_turn", content: [{ type: "text", text: "ok" }] });
+
+    const result = await anthropicProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
+
+    expect(result.usage).toBeUndefined();
+  });
 });

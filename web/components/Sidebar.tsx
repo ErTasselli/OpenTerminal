@@ -20,6 +20,7 @@ const ITEMS: Array<{ type: WidgetType; label: string; key: string }> = [
   { type: "tv", label: "LIVE TV", key: "" },
   { type: "recap", label: "MARKET RECAP", key: "" },
   { type: "memory", label: "MEMORY", key: "" },
+  { type: "audit-log", label: "AUDIT LOG", key: "" },
 ];
 
 export default function Sidebar() {

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "../db.js";
+import { writeAuditLog } from "../audit.js";
 import { txSchema } from "../schemas/transaction.js";
 
 // Pending Actions per CONTEXT.md: an AI-proposed ledger write held for human
@@ -55,6 +56,17 @@ pendingActionsRouter.post("/:id/pending-actions/:paId/confirm", (req, res) => {
   if (pa.operation === "DELETE") {
     db.prepare("DELETE FROM transactions WHERE id = ? AND portfolio_id = ?").run(pa.transaction_id, req.params.id);
     resolvePendingAction(pa.id, "confirmed");
+    writeAuditLog({
+      eventType: "pending_action",
+      summary: `confirmed DELETE (pending action #${pa.id})`,
+      detail: {
+        action: "confirmed",
+        operation: pa.operation,
+        pendingActionId: pa.id,
+        before: JSON.parse(pa.payload),
+        after: { transactionId: pa.transaction_id, deleted: true },
+      },
+    });
     return res.status(200).json({ ok: true });
   }
 
@@ -81,6 +93,17 @@ pendingActionsRouter.post("/:id/pending-actions/:paId/confirm", (req, res) => {
         pa.id
       );
     resolvePendingAction(pa.id, "confirmed");
+    writeAuditLog({
+      eventType: "pending_action",
+      summary: `confirmed ADD (pending action #${pa.id})`,
+      detail: {
+        action: "confirmed",
+        operation: pa.operation,
+        pendingActionId: pa.id,
+        before: JSON.parse(pa.payload),
+        after: { transactionId: info.lastInsertRowid, source: "ai" },
+      },
+    });
     return res.status(201).json({ id: info.lastInsertRowid, ...t });
   }
 
@@ -104,6 +127,17 @@ pendingActionsRouter.post("/:id/pending-actions/:paId/confirm", (req, res) => {
     req.params.id
   );
   resolvePendingAction(pa.id, "confirmed");
+  writeAuditLog({
+    eventType: "pending_action",
+    summary: `confirmed EDIT (pending action #${pa.id})`,
+    detail: {
+      action: "confirmed",
+      operation: pa.operation,
+      pendingActionId: pa.id,
+      before: JSON.parse(pa.payload),
+      after: { transactionId: pa.transaction_id, source: "ai", ...t },
+    },
+  });
   res.status(200).json({ id: pa.transaction_id, ...t });
 });
 
@@ -111,5 +145,16 @@ pendingActionsRouter.post("/:id/pending-actions/:paId/reject", (req, res) => {
   const pa = findPendingAction(req.params.id, req.params.paId);
   if (!pa) return res.status(404).json({ error: "pending action not found" });
   resolvePendingAction(pa.id, "rejected");
+  writeAuditLog({
+    eventType: "pending_action",
+    summary: `rejected ${pa.operation} (pending action #${pa.id})`,
+    detail: {
+      action: "rejected",
+      operation: pa.operation,
+      pendingActionId: pa.id,
+      before: JSON.parse(pa.payload),
+      after: null,
+    },
+  });
   res.status(200).json({ ok: true });
 });
