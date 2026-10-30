@@ -38,6 +38,29 @@ describe("cache", () => {
     expect(cacheGet("flood-1000")).toBe(1000);
   });
 
+  it("collapses concurrent misses on one key into a single upstream call", async () => {
+    let calls = 0;
+    const loader = async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return "v";
+    };
+    const results = await Promise.all(Array.from({ length: 25 }, () => cached("stampede", 1000, loader)));
+    expect(results.every((v) => v === "v")).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it("does not pin a failed in-flight load: the next call retries", async () => {
+    let calls = 0;
+    const loader = async () => {
+      calls++;
+      if (calls === 1) throw new Error("flaky");
+      return "ok";
+    };
+    await expect(cached("retry-after-fail", 1000, loader)).rejects.toThrow("flaky");
+    expect(await cached("retry-after-fail", 1000, loader)).toBe("ok");
+  });
+
   it("evicts the oldest stale entries once staleStore exceeds its max size", () => {
     for (let i = 0; i < 1001; i++) {
       staleSet(`stale-flood-${i}`, i);

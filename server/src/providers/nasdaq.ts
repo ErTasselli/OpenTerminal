@@ -1,4 +1,5 @@
-import type { Quote, Candle } from "./yahoo.js";
+import type { Quote, Candle, ExtendedQuote } from "./yahoo.js";
+import { httpFetch } from "../http.js";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const HEADERS = { "User-Agent": UA, Accept: "application/json", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
@@ -21,7 +22,7 @@ function release(): void {
 async function nfetch(url: string): Promise<any> {
   await acquire();
   try {
-    const res = await fetch(url, { headers: HEADERS });
+    const res = await httpFetch(url, { headers: HEADERS });
     if (!res.ok) throw new Error(`nasdaq ${res.status} for ${url}`);
     const json = await res.json();
     if (!json?.data) throw new Error(`nasdaq: no data in response for ${url}`);
@@ -77,12 +78,16 @@ export async function quote(symbol: string): Promise<Quote> {
     nfetch(`https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/summary?assetclass=${assetclass}`).catch(() => null),
   ]);
 
-  const price = money(info.primaryData?.lastSalePrice);
-  const prevClose = money(info.primaryData?.previousClose) ?? money(summary?.summaryData?.PreviousClose?.value);
-  const change = money(info.primaryData?.netChange);
-  const pctChange = typeof info.primaryData?.percentageChange === "string"
-    ? Number(info.primaryData.percentageChange.replace(/[%+]/g, ""))
-    : null;
+  const { regular, extended } = splitSessions(info);
+  const price = regular.price;
+  const change = regular.change;
+  const pctChange = regular.changePercent;
+  // price - change is the close the change was measured against; Nasdaq's summary
+  // "PreviousClose" sometimes disagrees with it (seen off by $2.65 on SPY after hours).
+  const prevClose =
+    price !== null && change !== null
+      ? Math.round((price - change) * 10_000) / 10_000
+      : money(info.primaryData?.previousClose) ?? money(summary?.summaryData?.PreviousClose?.value);
 
   const [dayLow, dayHigh] = (info.keyStats?.dayrange?.value ?? "").split(" - ").map((s: string) => money(s));
   const [wLow, wHigh] = (info.keyStats?.fiftyTwoWeekHighLow?.value ?? "").split(" - ").map((s: string) => money(s));
@@ -96,7 +101,7 @@ export async function quote(symbol: string): Promise<Quote> {
     name: info.companyName ?? null,
     price,
     change,
-    changePercent: isFinite(pctChange as number) ? pctChange : null,
+    changePercent: pctChange,
     open: null,
     high: dayHigh ?? null,
     low: dayLow ?? null,
@@ -118,6 +123,40 @@ export async function quote(symbol: string): Promise<Quote> {
     marketState: info.marketStatus ?? null,
     time: null,
     source: "nasdaq",
+    extended,
+  };
+}
+
+const pct = (v: unknown): number | null => {
+  if (typeof v !== "string") return null;
+  const n = Number(v.replace(/[%+,]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Outside regular hours Nasdaq's `primaryData` is the pre-market/after-hours
+ * trade (change measured from the last regular close) and `secondaryData` is
+ * that regular close ("Closed at Oct 29, 2026 4:00 PM ET"). Showing primaryData
+ * as the day's price mislabelled an after-hours move as the day's change.
+ */
+export function splitSessions(info: any): {
+  regular: { price: number | null; change: number | null; changePercent: number | null };
+  extended: ExtendedQuote | null;
+} {
+  const p = info?.primaryData ?? {};
+  const s = info?.secondaryData;
+  const read = (d: any) => ({ price: money(d?.lastSalePrice), change: money(d?.netChange), changePercent: pct(d?.percentageChange) });
+  const closed = s && /closed/i.test(String(s.lastTradeTimestamp ?? "")) && (money(s.lastSalePrice) ?? 0) > 0;
+  if (!closed) return { regular: read(p), extended: null };
+  const ext = read(p);
+  const status = String(info?.marketStatus ?? "").toLowerCase();
+  const clock = /(\d{1,2}:\d{2} [AP]M) ET/.exec(String(p.lastTradeTimestamp ?? ""));
+  return {
+    regular: read(s),
+    extended:
+      ext.price !== null && ext.price > 0
+        ? { session: status.includes("pre") ? "pre" : "post", ...ext, price: ext.price, time: clock ? `${clock[1]} ET` : null }
+        : null,
   };
 }
 
@@ -148,6 +187,63 @@ export async function history(symbol: string, rangeKey: string): Promise<Candle[
     if (o === null || h === null || l === null || c === null) continue;
     candles.push({ time: Math.round(p.x / 1000), open: o, high: h, low: l, close: c, volume: money(z.volume) ?? 0 });
   }
+  return candles;
+}
+
+/** Regular US session, in minutes after midnight ET. */
+const SESSION_OPEN_MIN = 9 * 60 + 30;
+const SESSION_CLOSE_MIN = 16 * 60;
+/** Extended hours: pre-market from 4:00, after-hours until 20:00 ET. */
+const EXT_OPEN_MIN = 4 * 60;
+const EXT_CLOSE_MIN = 20 * 60;
+
+/**
+ * Folds Nasdaq's per-minute intraday points into OHLC candles of `bucketMin`
+ * minutes, regular session only. Nasdaq encodes ET wall-clock time in `x` as
+ * if it were UTC (an 11:39 AM ET point has x = 11:39Z), the same convention
+ * its daily chart uses, so UTC getters yield the ET session time.
+ */
+export function minutePointsToCandles(
+  points: Array<{ x: number; y: number; w?: number }>,
+  bucketMin = 5,
+  extended = false
+): Candle[] {
+  const bucketSec = bucketMin * 60;
+  const candles: Candle[] = [];
+  const [from, to] = extended ? [EXT_OPEN_MIN, EXT_CLOSE_MIN] : [SESSION_OPEN_MIN, SESSION_CLOSE_MIN];
+  for (const p of points) {
+    if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+    const d = new Date(p.x);
+    const minuteOfDay = d.getUTCHours() * 60 + d.getUTCMinutes();
+    if (minuteOfDay < from || minuteOfDay >= to) continue;
+    const session = minuteOfDay < SESSION_OPEN_MIN ? "pre" : minuteOfDay >= SESSION_CLOSE_MIN ? "post" : undefined;
+    const time = Math.floor(p.x / 1000 / bucketSec) * bucketSec;
+    const volume = Number.isFinite(p.w) ? Math.round(p.w as number) : 0;
+    const last = candles[candles.length - 1];
+    if (last && last.time === time) {
+      last.high = Math.max(last.high, p.y);
+      last.low = Math.min(last.low, p.y);
+      last.close = p.y;
+      last.volume += volume;
+    } else {
+      candles.push({ time, open: p.y, high: p.y, low: p.y, close: p.y, volume, ...(session ? { session } : {}) });
+    }
+  }
+  return candles;
+}
+
+/**
+ * Today's session as 5-minute candles, current to the latest minute. Throws
+ * when there's nothing in-session yet (pre-market, holidays) so callers fall
+ * back to the daily chart instead of rendering an empty one.
+ */
+export async function intraday(symbol: string, bucketMin = 5, extended = false): Promise<Candle[]> {
+  const assetclass = await resolveAssetClass(symbol);
+  const data = await nfetch(
+    `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/chart?assetclass=${assetclass}&charttype=rs`
+  );
+  const candles = minutePointsToCandles(data.chart ?? [], bucketMin, extended);
+  if (candles.length === 0) throw new Error(`nasdaq: no in-session intraday data for ${symbol}`);
   return candles;
 }
 

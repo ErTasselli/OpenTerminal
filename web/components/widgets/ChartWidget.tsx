@@ -14,9 +14,15 @@ import {
 } from "lightweight-charts";
 import { apiGet, fmt, fmtBig, type Candle } from "../../lib/api";
 import { sma, ema, vwap, rsi, macd, bollinger, type Point } from "../../lib/indicators";
+import Explain from "../Explain";
 import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
 
 const RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
+/** 9:30-16:00 in the 5-minute buckets the server builds for 1D. */
+const SESSION_SLOTS_1D = 78;
+/** 4:00-20:00 with pre-market and after-hours. */
+const EXT_SESSION_SLOTS_1D = 192;
+const MIN_VISIBLE_SLOTS = 60;
 const CHART_TYPES = ["candles", "bars", "line", "area"] as const;
 const INDICATORS = ["SMA20", "SMA50", "SMA200", "EMA20", "VWAP", "BOLL", "RSI", "MACD"] as const;
 
@@ -35,6 +41,9 @@ const INDICATOR_COLOR: Record<string, string> = {
 export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const symbol = useWidgetSymbol(widget);
   const [range, setRange] = useState<Range>("6M");
+  // Pre-market + after-hours candles on 1D. Off by default, like most terminals.
+  const [ext, setExt] = useState(false);
+  const withExt = range === "1D" && ext;
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [active, setActive] = useState<Set<Indicator>>(new Set(["SMA20"]));
   const [legend, setLegend] = useState<Candle | null>(null);
@@ -42,8 +51,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const chartRef = useRef<IChartApi | null>(null);
 
   const { data: candles, error } = useQuery({
-    queryKey: ["history", symbol, range],
-    queryFn: () => apiGet<Candle[]>(`/api/history/${encodeURIComponent(symbol)}?range=${range}`),
+    queryKey: ["history", symbol, range, withExt],
+    queryFn: () => apiGet<Candle[]>(`/api/history/${encodeURIComponent(symbol)}?range=${range}${withExt ? "&ext=1" : ""}`),
     refetchInterval: range === "1D" ? 8_000 : 60_000,
   });
 
@@ -145,6 +154,28 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
 
     const upColor = "#00c853";
     const downColor = "#ff3d3d";
+    // Extended-hours candles are drawn faded so the regular session stands out.
+    const extColor = (c: Candle) => (c.close >= c.open ? "rgba(0,200,83,0.38)" : "rgba(255,61,61,0.38)");
+    const ohlc = (c: Candle) => {
+      const base = { time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close };
+      if (!c.session) return base;
+      const color = extColor(c);
+      return { ...base, color, borderColor: color, wickColor: color };
+    };
+
+    // Shade pre-market / after-hours behind everything: a full-height filled area
+    // (1 = extended, 0 = regular) on its own hidden scale. Series added first are
+    // drawn underneath; an area has no gaps between bars, unlike a histogram.
+    if (candles.some((c) => c.session)) {
+      const fill = "rgba(79,195,247,0.07)";
+      const shade = chart.addSeries(AreaSeries, {
+        priceScaleId: "session", lineVisible: false, lineWidth: 1, topColor: fill, bottomColor: fill,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 1 } }),
+      });
+      shade.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
+      shade.setData(candles.map((c) => ({ time: ts(c.time), value: c.session ? 1 : 0 })));
+    }
 
     if (chartType === "candles") {
       chart
@@ -152,15 +183,15 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
           upColor, downColor, borderUpColor: upColor, borderDownColor: downColor,
           wickUpColor: upColor, wickDownColor: downColor,
         })
-        .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+        .setData(candles.map(ohlc));
     } else if (chartType === "bars") {
       chart
         .addSeries(BarSeries, { upColor, downColor })
-        .setData(candles.map((c) => ({ time: ts(c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+        .setData(candles.map((c) => (c.session ? { ...ohlc(c), color: extColor(c) } : ohlc(c))));
     } else if (chartType === "line") {
       chart
         .addSeries(LineSeries, { color: "#ff9900", lineWidth: 1 })
-        .setData(candles.map((c) => ({ time: ts(c.time), value: c.close })));
+        .setData(candles.map((c) => ({ time: ts(c.time), value: c.close, ...(c.session ? { color: "rgba(255,153,0,0.4)" } : {}) })));
     } else {
       chart
         .addSeries(AreaSeries, { lineColor: "#ff9900", topColor: "rgba(255,153,0,0.25)", bottomColor: "rgba(255,153,0,0)" })
@@ -171,7 +202,11 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     const vol = chart.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" } });
     vol.priceScale().applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     vol.setData(
-      candles.map((c) => ({ time: ts(c.time), value: c.volume, color: c.close >= c.open ? "rgba(0,200,83,0.4)" : "rgba(255,61,61,0.4)" }))
+      candles.map((c) => ({
+        time: ts(c.time),
+        value: c.volume,
+        color: c.session ? (c.close >= c.open ? "rgba(0,200,83,0.15)" : "rgba(255,61,61,0.15)") : c.close >= c.open ? "rgba(0,200,83,0.4)" : "rgba(255,61,61,0.4)",
+      }))
     );
 
     const overlay = (points: Point[], color: string) =>
@@ -217,12 +252,18 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       if (hit) setLegend(hit);
     });
 
-    chart.timeScale().fitContent();
+    // fitContent() stretches whatever bars exist across the whole panel, so early in the
+    // session 1D showed a dozen giant candles. Reserve the full session instead (78 five-minute
+    // slots, 9:30-16:00) and let it fill in left to right; other ranges get a minimum of 60 slots
+    // so short histories (new listings) don't balloon either.
+    const minSlots = range === "1D" ? (withExt ? EXT_SESSION_SLOTS_1D : SESSION_SLOTS_1D) : MIN_VISIBLE_SLOTS;
+    if (candles.length < minSlots) chart.timeScale().setVisibleLogicalRange({ from: -1.5, to: minSlots - 0.5 });
+    else chart.timeScale().fitContent();
     return () => {
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, chartType, indicatorData, range, byTime]);
+  }, [candles, chartType, indicatorData, range, withExt, byTime]);
 
   const toggleIndicator = (ind: Indicator) =>
     setActive((prev) => {
@@ -240,6 +281,16 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
             {r}
           </button>
         ))}
+        {range === "1D" && (
+          <button
+            className={`term-btn ${ext ? "active" : ""}`}
+            onClick={() => setExt(!ext)}
+            aria-pressed={ext}
+            title="Pre-market (4:00-9:30) and after-hours (16:00-20:00) candles, US stocks"
+          >
+            <Explain nested term="extendedHours">EXT</Explain>
+          </button>
+        )}
         <span className="w-2" />
         {CHART_TYPES.map((t) => (
           <button key={t} className={`term-btn ${chartType === t ? "active" : ""}`} onClick={() => setChartType(t)}>
@@ -249,7 +300,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
         <span className="w-2" />
         {INDICATORS.map((ind) => (
           <button key={ind} className={`term-btn ${active.has(ind) ? "active" : ""}`} onClick={() => toggleIndicator(ind)}>
-            {ind}
+            <Explain nested>{ind}</Explain>
           </button>
         ))}
       </div>

@@ -53,9 +53,12 @@ export type Quote = {
   source: string;
   sector?: string;
   label?: string;
+  /** Pre-market / after-hours trade; `price` above stays the regular session's. */
+  extended?: { session: "pre" | "post"; price: number; change: number | null; changePercent: number | null; time: string | null } | null;
 };
 
-export type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
+/** `session` marks pre-market / after-hours candles (1D chart with EXT on). */
+export type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number; session?: "pre" | "post" };
 
 export function fmt(n: number | null | undefined, digits = 2): string {
   if (n === null || n === undefined || !isFinite(n)) return "—";

@@ -32,6 +32,9 @@ services:
       - API_URL=http://api:4000
       - API_KEY=${API_KEY:-}
       - API_KEY_FILE=/app/data/.api-key
+      # Set both to serve beyond localhost (see README > Security defaults).
+      - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-}
+      - WEB_ACCESS_TOKEN=${WEB_ACCESS_TOKEN:-}
     volumes:
       - terminal-data:/app/data:ro
     depends_on:

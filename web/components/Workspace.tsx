@@ -21,6 +21,10 @@ import CalendarWidget from "./widgets/CalendarWidget";
 import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
+import AlertsWidget from "./widgets/AlertsWidget";
+import SectorStrengthWidget from "./widgets/SectorStrengthWidget";
+import PaperWidget from "./widgets/PaperWidget";
+import ReplayWidget from "./widgets/ReplayWidget";
 import WidgetErrorBoundary from "./WidgetErrorBoundary";
 
 const Grid = WidthProvider(GridLayout);
@@ -42,6 +46,10 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "insider": return <InsiderWidget widget={widget} />;
     case "tv": return <TvWidget />;
     case "recap": return <RecapWidget />;
+    case "alerts": return <AlertsWidget />;
+    case "sectors": return <SectorStrengthWidget />;
+    case "paper": return <PaperWidget />;
+    case "replay": return <ReplayWidget />;
   }
 }
 

@@ -4,6 +4,7 @@
 // releases (Fed, ECB, CPI, NFP) we backfill "actual" from FRED once the real number
 // is out — FRED IS where those official releases end up, usually within a day or two.
 import * as fred from "./fred.js";
+import { httpFetch } from "../http.js";
 
 export type EconEvent = {
   title: string;
@@ -18,7 +19,7 @@ export type EconEvent = {
 type FFRaw = { title: string; country: string; date: string; impact: string; forecast: string; previous: string };
 
 async function fetchWeek(which: "thisweek" | "nextweek"): Promise<FFRaw[]> {
-  const res = await fetch(`https://nfs.faireconomy.media/ff_calendar_${which}.json`, {
+  const res = await httpFetch(`https://nfs.faireconomy.media/ff_calendar_${which}.json`, {
     headers: { "User-Agent": "Mozilla/5.0" },
   });
   if (!res.ok) throw new Error(`forexfactory ${res.status} for ${which}`);

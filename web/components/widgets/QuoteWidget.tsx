@@ -2,18 +2,23 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { apiGet, fmt, fmtBig, pctClass, type Quote } from "../../lib/api";
+import { pollUnlessLive, useLiveQuotes } from "../../lib/live";
 import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
 import Flash from "../Flash";
+import Explain from "../Explain";
 
 type ShortVolume = { date: string; shortVolume: number; shortExemptVolume: number; totalVolume: number; shortVolumePercent: number };
 
 export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
   const symbol = useWidgetSymbol(widget);
-  const { data, error } = useQuery({
+  const live = useLiveQuotes([symbol]);
+  const { data: polled, error: pollError } = useQuery({
     queryKey: ["quote", symbol],
     queryFn: async () => (await apiGet<Quote[]>(`/api/quotes?symbols=${encodeURIComponent(symbol)}`))[0],
-    refetchInterval: 1_000,
+    refetchInterval: pollUnlessLive(live.connected),
   });
+  const data = live.quotes.get(symbol) ?? polled;
+  const error = data ? null : pollError;
   // FINRA's Reg SHO file only updates once a day (next-morning), so no point polling it fast.
   const { data: shortVol } = useQuery({
     queryKey: ["short-volume", symbol],
@@ -56,11 +61,24 @@ export default function QuoteWidget({ widget }: { widget: WidgetInstance }) {
           {data.exchange ?? ""} · {data.currency ?? ""} · {data.source}
         </span>
       </div>
+      {data.extended && (
+        <div className="flex items-baseline gap-2 text-[11px] mb-1">
+          <Explain className="dim uppercase" term={data.extended.session === "pre" ? "preMarket" : "afterHours"}>
+            {data.extended.session === "pre" ? "Pre-market" : "After hours"}
+          </Explain>
+          <Flash value={data.extended.price} className="font-bold">{fmt(data.extended.price)}</Flash>
+          <span className={pctClass(data.extended.changePercent)}>
+            {data.extended.change !== null && data.extended.change >= 0 ? "+" : ""}
+            {fmt(data.extended.change)} ({fmt(data.extended.changePercent)}%)
+          </span>
+          {data.extended.time && <span className="dim">{data.extended.time}</span>}
+        </div>
+      )}
       <div className="dim text-[11px] mb-2 truncate">{data.name}</div>
       <div className="grid grid-cols-2 gap-x-4">
         {rows.map(([label, value]) => (
           <div key={label} className="flex justify-between border-b border-[#161616] py-0.5">
-            <span className="dim">{label}</span>
+            <Explain className="dim">{label}</Explain>
             <span>{value}</span>
           </div>
         ))}

@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiGet, fmt, pctClass } from "../../lib/api";
+import { pollUnlessLive, useLiveMacro } from "../../lib/live";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from "recharts";
 import { useTerminal } from "../../store/terminal";
 import Flash from "../Flash";
@@ -18,11 +19,14 @@ type MacroData = {
 export default function MacroWidget() {
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
   const [region, setRegion] = useState<"us" | "eu">("us");
-  const { data, error } = useQuery({
+  const live = useLiveMacro<MacroData>(region);
+  const { data: polled, error: pollError } = useQuery({
     queryKey: ["macro", region],
     queryFn: () => apiGet<MacroData>(`/api/macro?region=${region}`),
-    refetchInterval: 1_000,
+    refetchInterval: pollUnlessLive(live.connected),
   });
+  const data = live.data ?? polled;
+  const error = data ? null : pollError;
 
   return (
     <div>

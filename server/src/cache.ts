@@ -55,19 +55,31 @@ export function staleGet<T>(key: string): T | undefined {
   return value;
 }
 
+// In-flight loads, so N concurrent misses on one key share one upstream call
+// instead of each fanning out to the providers (a cache stampede).
+const inflight = new Map<string, Promise<unknown>>();
+
 export async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
   const hit = cacheGet<T>(key);
   if (hit !== undefined) return hit;
-  try {
-    const value = await fn();
-    cacheSet(key, value, ttlMs);
-    staleSet(key, value);
-    return value;
-  } catch (err) {
-    const stale = staleGet<T>(key);
-    if (stale !== undefined) return stale;
-    throw err;
-  }
+  const pending = inflight.get(key);
+  if (pending) return pending as Promise<T>;
+  const load = (async () => {
+    try {
+      const value = await fn();
+      cacheSet(key, value, ttlMs);
+      staleSet(key, value);
+      return value;
+    } catch (err) {
+      const stale = staleGet<T>(key);
+      if (stale !== undefined) return stale;
+      throw err;
+    } finally {
+      inflight.delete(key);
+    }
+  })();
+  inflight.set(key, load);
+  return load;
 }
 
 export function cacheStore(key: string, value: unknown, ttlMs: number): void {

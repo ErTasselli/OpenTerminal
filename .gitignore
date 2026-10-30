@@ -11,3 +11,6 @@ out/
 # Database
 data/*.db*
 data/.api-key
+
+# Brand build: downloaded font archive (fetched + SHA-256 checked by build_brand.py)
+docs/brand/tools/.cache/
