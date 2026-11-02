@@ -10,6 +10,13 @@ services:
       - "127.0.0.1:4000:4000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
+      - SCHWAB_CLIENT_ID=${SCHWAB_CLIENT_ID:-}
+      - SCHWAB_CLIENT_SECRET=${SCHWAB_CLIENT_SECRET:-}
+      - SCHWAB_REDIRECT_URI=${SCHWAB_REDIRECT_URI:-https://127.0.0.1}
+      - SCHWAB_REFRESH_TOKEN=${SCHWAB_REFRESH_TOKEN:-}
+      - SCHWAB_ACCESS_TOKEN=${SCHWAB_ACCESS_TOKEN:-}
       - API_KEY=${API_KEY:-}
       - API_HOST=0.0.0.0 # safe: still only published to 127.0.0.1 above
       - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3000}

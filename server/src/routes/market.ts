@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { cached, cacheGet, cacheStore, staleGet } from "../cache.js";
-import { withFallback } from "../providers/registry.js";
+import { tracked, withFallback } from "../providers/registry.js";
+import * as schwab from "../providers/schwab.js";
+import { getSettings } from "../settings.js";
 import * as yahoo from "../providers/yahoo.js";
 import * as stooq from "../providers/stooq.js";
 import * as nasdaq from "../providers/nasdaq.js";
@@ -98,9 +100,10 @@ async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
 /**
  * Resolve quotes for a symbol list, reusing a per-symbol cache across every
  * caller (single quote widget, watchlist, screener, heatmap all share hits).
- * Nasdaq's public quote API is primary (no key, generous limits); Yahoo and
- * Stooq are fallbacks. A symbol that fails everywhere still falls back to
- * its last-known value instead of failing the whole batch.
+ * When configured, Schwab handles the batch first (real-time quotes and
+ * fundamentals); Nasdaq, Yahoo, and Stooq remain the keyless fallbacks. A
+ * symbol that fails everywhere still falls back to its last-known value
+ * instead of failing the whole batch.
  *
  * Fan-out bound: the /quotes route caps `symbols` at 150, so a single call
  * here does at most ~150 crypto lookups (only for recognized crypto symbols,
@@ -111,6 +114,13 @@ async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
  * per-IP rate limit (see index.ts).
  */
 const FALLBACK_PER_SYMBOL_CAP = 20;
+
+// "public" in Settings skips Schwab entirely; the default "schwab" mode keeps
+// the public chain as a fallback for symbols Schwab cannot serve.
+function schwabSourceEnabled(): boolean {
+  return getSettings().dataSource === "schwab" && schwab.isSchwabEnabled();
+}
+
 async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   const fresh = new Map<string, yahoo.Quote>();
   const missing: string[] = [];
@@ -140,6 +150,19 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
       if (r.status === "fulfilled") fetched.set(vixSymbols[i], r.value);
     });
     remaining = remaining.filter((s) => !fetched.has(s));
+  }
+
+  // Schwab is primary when configured: one batched request covers every symbol
+  // in the widget, with real-time bid/ask and fundamentals. Keep partial
+  // results and let any unresolved symbols fall through to the public chain.
+  if (remaining.length > 0 && schwabSourceEnabled()) {
+    try {
+      const rows = await tracked("schwab", () => schwab.quotes(remaining));
+      for (const q of rows) fetched.set(q.symbol, q);
+      remaining = remaining.filter((s) => !fetched.has(s));
+    } catch {
+      // fall through to Nasdaq/Yahoo/Stooq
+    }
   }
 
   const nasdaqResults = await Promise.allSettled(remaining.map((s) => nasdaq.quote(s)));
@@ -178,7 +201,9 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   // Fill gaps Nasdaq's quote endpoints don't cover (open, P/E, EPS, dividend
   // yield, beta, shares outstanding) from TradingView's public scanner API,
   // in one batched request for every quote that resolved an exchange.
-  const needsFundamentals = [...fetched.values()].filter((q) => q.exchange && q.pe === null);
+  const needsFundamentals = [...fetched.values()].filter(
+    (q) => q.exchange && (q.pe === null || q.beta === null || q.sharesOutstanding === null)
+  );
   if (needsFundamentals.length > 0) {
     try {
       const fundamentals = await tradingview.scanFundamentals(
@@ -231,17 +256,19 @@ marketRouter.get("/history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const rangeKey = String(req.query.range ?? "6M");
   try {
-    const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
-      binance.CRYPTO_SYMBOLS.has(symbol)
-        ? binance.history(symbol, rangeKey)
-        : isVix(symbol)
-        ? vixHistory(rangeKey)
-        : withFallback([
-            ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
-            ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],
-            ["stooq", () => stooq.history(symbol)],
-          ])
-    );
+    const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () => {
+      if (binance.CRYPTO_SYMBOLS.has(symbol)) return binance.history(symbol, rangeKey);
+      if (isVix(symbol)) return vixHistory(rangeKey);
+
+      const attempts: Array<[string, () => Promise<yahoo.Candle[]>]> = [];
+      if (schwabSourceEnabled()) attempts.push(["schwab", () => schwab.history(symbol, rangeKey)]);
+      attempts.push(
+        ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
+        ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],
+        ["stooq", () => stooq.history(symbol)]
+      );
+      return withFallback(attempts);
+    });
     if (!Array.isArray(data) || data.length === 0) throw new Error("empty history from all providers");
     res.json(data);
   } catch (err) {
@@ -269,12 +296,15 @@ marketRouter.get("/search", async (req, res) => {
   const q = String(req.query.q ?? "").trim();
   if (!q) return res.json([]);
   try {
-    const data = await cached(`search:${q.toLowerCase()}`, 300_000, () =>
-      withFallback([
+    const data = await cached(`search:${q.toLowerCase()}`, 300_000, () => {
+      const attempts: Array<[string, () => Promise<yahoo.SearchResult[]>]> = [];
+      if (schwabSourceEnabled()) attempts.push(["schwab", () => schwab.search(q)]);
+      attempts.push(
         ["tradingview", () => tradingview.search(q)],
-        ["yahoo", () => yahoo.search(q)],
-      ])
-    );
+        ["yahoo", () => yahoo.search(q)]
+      );
+      return withFallback(attempts);
+    });
     res.json(data);
   } catch (err) {
     fail(req, res, err);
@@ -324,8 +354,10 @@ marketRouter.get("/options/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const expiry = req.query.expiry ? String(req.query.expiry) : undefined;
   try {
-    const data = await cached(`options:${symbol}:${expiry ?? "front"}`, 60_000, () =>
-      withFallback([
+    const data = await cached(`options:${symbol}:${expiry ?? "front"}`, 60_000, () => {
+      const attempts: Array<[string, () => Promise<any>]> = [];
+      if (schwabSourceEnabled()) attempts.push(["schwab", () => schwab.optionChain(symbol, expiry)]);
+      attempts.push(
         ["nasdaq", () => nasdaq.optionChain(symbol, expiry)],
         [
           "yahoo",
@@ -340,9 +372,10 @@ marketRouter.get("/options/:symbol", async (req, res) => {
               puts: y.puts,
             };
           },
-        ],
-      ])
-    );
+        ]
+      );
+      return withFallback(attempts);
+    });
     res.json(data);
   } catch (err) {
     fail(req, res, err);
@@ -725,13 +758,18 @@ marketRouter.get("/earnings-history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   try {
     const data = await cached(`earnings-history:${symbol}`, 3_600_000, async () => {
+      const historyAttempts: Array<[string, () => Promise<yahoo.Candle[]>]> = [];
+      if (schwabSourceEnabled()) {
+        historyAttempts.push(["schwab", () => schwab.history(symbol, "1Y")]);
+      }
+      historyAttempts.push(
+        ["nasdaq", () => nasdaq.history(symbol, "1Y")],
+        ["yahoo", () => yahoo.history(symbol, yahooRange("1Y").range, yahooRange("1Y").interval)],
+        ["stooq", () => stooq.history(symbol)]
+      );
       const [surprises, candles] = await Promise.all([
         nasdaq.earningsSurprise(symbol),
-        withFallback([
-          ["nasdaq", () => nasdaq.history(symbol, "1Y")],
-          ["yahoo", () => yahoo.history(symbol, yahooRange("1Y").range, yahooRange("1Y").interval)],
-          ["stooq", () => stooq.history(symbol)],
-        ]),
+        withFallback(historyAttempts),
       ]);
       const sorted = [...candles].sort((a, b) => a.time - b.time);
       // Nearest trading-day close on/after a given date, and the close of the

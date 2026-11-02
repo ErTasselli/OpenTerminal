@@ -1,13 +1,24 @@
 import { Router } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAiConfig } from "../settings.js";
 
 export const aiRouter = Router();
 
-// Uses ANTHROPIC_API_KEY (or an `ant auth login` profile) from the environment.
-// If no credentials are configured, the endpoint reports the assistant as unavailable.
+// Rebuild the client when the key or base URL changes in Settings. Without
+// settings overrides the SDK still falls back to env vars / `ant auth login`.
 let client: Anthropic | null = null;
+let clientSignature = "";
+
 function getClient(): Anthropic {
-  if (!client) client = new Anthropic();
+  const config = getAiConfig();
+  const signature = `${config.apiKey ?? ""}|${config.baseUrl ?? ""}`;
+  if (!client || signature !== clientSignature) {
+    const options: ConstructorParameters<typeof Anthropic>[0] = {};
+    if (config.apiKey) options.apiKey = config.apiKey;
+    if (config.baseUrl) options.baseURL = config.baseUrl;
+    client = new Anthropic(options);
+    clientSignature = signature;
+  }
   return client;
 }
 
@@ -27,7 +38,7 @@ aiRouter.post("/chat", async (req, res) => {
       ? [{ role: "user" as const, content: `Current terminal context (JSON):\n${JSON.stringify(context)}` }]
       : [];
     const response = await getClient().messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? "claude-opus-4-8",
+      model: getAiConfig().model,
       max_tokens: 16000,
       thinking: { type: "adaptive" },
       system: SYSTEM,
@@ -44,7 +55,9 @@ aiRouter.post("/chat", async (req, res) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("api_key") || msg.includes("authentication")) {
-      return res.status(503).json({ error: "AI assistant unavailable: set ANTHROPIC_API_KEY on the server." });
+      return res.status(503).json({
+        error: "AI assistant unavailable: add an Anthropic API key in Settings (or set ANTHROPIC_API_KEY).",
+      });
     }
     res.status(502).json({ error: msg });
   }

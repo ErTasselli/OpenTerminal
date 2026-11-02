@@ -3,7 +3,13 @@ import cors from "cors";
 import { marketRouter } from "./routes/market.js";
 import { portfolioRouter } from "./routes/portfolio.js";
 import { aiRouter } from "./routes/ai.js";
+import { schwabRouter } from "./routes/schwab.js";
+import { streamRouter } from "./routes/stream.js";
+import { settingsRouter } from "./routes/settings.js";
 import { allStats } from "./providers/registry.js";
+import { schwabStreamer } from "./providers/schwabStreamer.js";
+import { isSchwabConfigured } from "./providers/schwabAuth.js";
+import { getAiConfig, getSettings } from "./settings.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
 
@@ -35,6 +41,11 @@ app.use(express.json());
 // hundreds of outbound calls per request — see getQuotes) fast enough to get
 // this deployment's IP rate-limited or banned by Nasdaq/Yahoo/Stooq/SEC.
 app.use("/api", rateLimit({ windowMs: 60_000, max: 240 }), marketRouter);
+// Schwab-specific endpoints and streaming spend the user's own API quota, so
+// they sit behind the shared secret even though the core market feed does not.
+app.use("/api/schwab", requireApiKey, schwabRouter);
+app.use("/api/stream", requireApiKey, streamRouter);
+app.use("/api/settings", requireApiKey, settingsRouter);
 // Portfolio data and the paid AI endpoint require a shared secret; see auth.ts.
 app.use("/api/portfolios", requireApiKey, portfolioRouter);
 app.use(
@@ -49,7 +60,12 @@ app.get("/api/status", (_req, res) => {
     ok: true,
     time: new Date().toISOString(),
     providers: allStats(),
-    ai: Boolean(process.env.ANTHROPIC_API_KEY),
+    ai: Boolean(getAiConfig().apiKey),
+    dataSource: getSettings().dataSource,
+    schwab: {
+      configured: isSchwabConfigured(),
+      streaming: schwabStreamer.status().state,
+    },
   });
 });
 

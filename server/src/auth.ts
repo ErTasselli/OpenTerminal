@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NextFunction, Request, Response } from "express";
-import { dataDir } from "./db.js";
+import { dataDir } from "./paths.js";
 
 const keyFile = join(dataDir, ".api-key");
 

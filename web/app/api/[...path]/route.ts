@@ -26,12 +26,28 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
     headers,
     body: hasBody ? await req.text() : undefined,
     cache: "no-store",
+    signal: req.signal,
   });
+
+  // SSE must stay a live stream. Buffering it (as the JSON path below does)
+  // would hold every quote update until the connection closes.
+  const responseType = upstream.headers.get("content-type") ?? "application/json";
+  if (responseType.startsWith("text/event-stream") && upstream.body) {
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: {
+        "content-type": responseType,
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      },
+    });
+  }
 
   const body = upstream.status === 204 ? null : await upstream.arrayBuffer();
   return new NextResponse(body, {
     status: upstream.status,
-    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    headers: { "content-type": responseType },
   });
 }
 
