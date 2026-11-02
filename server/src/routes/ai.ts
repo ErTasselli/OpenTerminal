@@ -1,5 +1,7 @@
 import { Router } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { runAgent } from "../ai/agent.js";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { getAiConfig } from "../settings.js";
 
 export const aiRouter = Router();
@@ -25,7 +27,10 @@ function getClient(): Anthropic {
 const SYSTEM = `You are the AI assistant inside OpenTerminal, a Bloomberg-style financial terminal.
 You help the user interpret market data, charts, news, options chains and macro indicators.
 Answer concisely and professionally, in the language the user writes in.
-When market data is provided in the conversation as JSON context, ground your answer in it.
+
+You have tools that read the terminal's live data: quotes, price history, option chains, news, insider transactions, and macro snapshots. Use them whenever the answer depends on current or historical market data; never invent prices, option values, headlines, or insider activity. Prefer get_quote before fetching more data for the same symbol. If a tool fails, say what failed rather than guessing.
+When market data is provided in the conversation as JSON context, ground your answer in it too.
+Cite the symbol, range/expiry, and timestamp when relevant.
 You are not a licensed financial advisor: never give personalized investment advice or tell the user what to buy or sell.`;
 
 aiRouter.post("/chat", async (req, res) => {
@@ -34,24 +39,17 @@ aiRouter.post("/chat", async (req, res) => {
     return res.status(400).json({ error: "messages array required" });
   }
   try {
-    const contextBlock = context
-      ? [{ role: "user" as const, content: `Current terminal context (JSON):\n${JSON.stringify(context)}` }]
-      : [];
-    const response = await getClient().messages.create({
+    const result = await runAgent({
+      client: getClient(),
       model: getAiConfig().model,
-      max_tokens: 16000,
-      thinking: { type: "adaptive" },
       system: SYSTEM,
-      messages: [...contextBlock, ...messages],
+      messages: messages.map((message: MessageParam) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      context,
     });
-    if (response.stop_reason === "refusal") {
-      return res.json({ text: "The assistant declined to answer this request." });
-    }
-    const text = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => ("text" in b ? b.text : ""))
-      .join("");
-    res.json({ text });
+    res.json(result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("api_key") || msg.includes("authentication")) {

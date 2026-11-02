@@ -191,6 +191,10 @@ npm run dev
 
 You can also paste the key, base URL, and model into **Settings**. Without a key, everything else still works — the AI widget just shows a friendly "unavailable" message instead of failing.
 
+The assistant uses read-only tools to pull live terminal data on demand: quotes, price history, option-chain summaries, news, SEC insider transactions, and macro snapshots. It can call these tools multiple times per question, but not arbitrary URLs, portfolio data, settings, or trading endpoints. Tool results are summarized and size-limited; the AI widget shows which tools were used under each reply.
+
+If your API is not reachable at `127.0.0.1:<API_PORT>` from the API process itself (for example, a non-loopback `API_HOST`), set `AI_INTERNAL_API_URL` to the loopback base URL used for tool calls.
+
 Two optional knobs for the assistant, both standard for the Anthropic SDK:
 
 - `ANTHROPIC_BASE_URL` — point the assistant at an Anthropic-compatible endpoint (a self-hosted gateway, an EU-hosted relay, etc.) instead of api.anthropic.com.
