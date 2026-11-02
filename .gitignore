@@ -8,6 +8,8 @@ out/
 .DS_Store
 
 
-# Database
+# Database / credentials
 data/*.db*
 data/.api-key
+data/.schwab-token.json
+data/settings.json

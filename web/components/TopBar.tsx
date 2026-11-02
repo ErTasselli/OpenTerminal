@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { useTerminal } from "../store/terminal";
@@ -9,6 +10,8 @@ type Status = {
   ok: boolean;
   providers: Array<{ name: string; ok: number; failed: number; lastLatencyMs: number | null }>;
   ai: boolean;
+  dataSource?: "schwab" | "public";
+  schwab?: { configured: boolean; streaming: string };
 };
 
 function Clock({ tz, label }: { tz: string; label: string }) {
@@ -69,7 +72,15 @@ export default function TopBar() {
           ? healthy.map((p) => `${p.name} ${p.lastLatencyMs ?? "—"}ms`).join(" · ")
           : "connecting…"}
       </span>
+      {status?.schwab?.configured && (
+        <span className={status.schwab.streaming === "connected" ? "up" : "dim"}>
+          SCHWAB {status.schwab.streaming === "connected" ? "●" : "○"}
+        </span>
+      )}
       <span className={status?.ai ? "up" : "dim"}>AI {status?.ai ? "●" : "○"}</span>
+      <Link href="/settings" className="dim hover:text-[var(--amber)]" title="Settings">
+        ⚙ SETTINGS
+      </Link>
     </header>
   );
 }

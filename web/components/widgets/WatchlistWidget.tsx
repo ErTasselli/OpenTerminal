@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiGet, fmt, fmtBig, pctClass, type Quote } from "../../lib/api";
+import { mergeLiveQuote, useLiveQuotes } from "../../lib/live";
 import { normalizeSymbol, symbolsParam } from "../../lib/symbol";
 import { useTerminal } from "../../store/terminal";
 import Flash from "../Flash";
@@ -15,11 +16,12 @@ export default function WatchlistWidget() {
   const [input, setInput] = useState("");
   const [invalid, setInvalid] = useState(false);
 
+  const { quotes: liveQuotes, connected } = useLiveQuotes(watchlist);
   const { data = [] } = useQuery({
     queryKey: ["watchlist", watchlist.join(",")],
     queryFn: () => apiGet<Quote[]>(`/api/quotes?symbols=${symbolsParam(watchlist)}`),
     enabled: watchlist.length > 0,
-    refetchInterval: 1_000,
+    refetchInterval: connected ? 15_000 : 1_000,
   });
 
   return (
@@ -57,7 +59,9 @@ export default function WatchlistWidget() {
         </thead>
         <tbody>
           {watchlist.map((sym) => {
-            const q = data.find((d) => d.symbol === sym);
+            const rest = data.find((d) => d.symbol === sym);
+            const live = liveQuotes[sym];
+            const q = rest ? mergeLiveQuote(rest, live) : live;
             return (
               <tr key={sym} onClick={() => setActiveSymbol(sym)}>
                 <td className="font-bold">{sym}</td>

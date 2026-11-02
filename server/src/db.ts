@@ -1,14 +1,8 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { dataDir } from "./paths.js";
 
-// DATA_DIR lets the Docker image point this at the mounted volume: once
-// compiled, dist/db.js sits two levels below /app instead of server/src, so
-// the source-relative default below would otherwise resolve outside /app.
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-export const dataDir = process.env.DATA_DIR ?? join(root, "data");
-mkdirSync(dataDir, { recursive: true });
+export { dataDir };
 
 export const db = new Database(join(dataDir, "terminal.db"));
 db.pragma("journal_mode = WAL");
