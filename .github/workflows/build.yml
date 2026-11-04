@@ -1,0 +1,34 @@
+name: Build images
+
+# Builds the api and web images with the shared reusable workflow and pushes
+# them to GHCR (PRs: build only, no push). See usagiy/github-workflows.
+#   main     -> ghcr.io/usagiy/openterminal-{api,web}:sha-<short> (+ latest)
+#   v1.2.3   -> ghcr.io/usagiy/openterminal-{api,web}:1.2.3
+# Tests run in ci.yml, so no test-command here.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  api:
+    uses: usagiy/github-workflows/.github/workflows/docker-build.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image-name: usagiy/openterminal-api
+      dockerfile: ./server/Dockerfile
+      context: .
+
+  web:
+    uses: usagiy/github-workflows/.github/workflows/docker-build.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image-name: usagiy/openterminal-web
+      dockerfile: ./web/Dockerfile
+      context: .

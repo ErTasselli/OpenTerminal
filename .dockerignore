@@ -1,0 +1,13 @@
+# Both Dockerfiles build from the repo root; keep local artifacts and secrets
+# out of the build context.
+.git
+**/node_modules
+**/.next
+**/dist
+**/*.tsbuildinfo
+**/*.log
+.env
+.env.*
+data/*.db*
+data/.api-key
+docs
