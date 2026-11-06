@@ -140,6 +140,13 @@ Two optional knobs for the assistant, both standard for the Anthropic SDK:
 - `ANTHROPIC_BASE_URL` — point the assistant at an Anthropic-compatible endpoint (a self-hosted gateway, an EU-hosted relay, etc.) instead of api.anthropic.com.
 - `ANTHROPIC_MODEL` — override the model sent in requests (default: `claude-opus-4-8`). Required when the endpoint behind `ANTHROPIC_BASE_URL` serves models under different ids.
 
+Spend guards for `/api/ai/chat` (all optional):
+
+- `AI_DAILY_TOKEN_LIMIT` — soft daily cap on billed tokens (input + output + cache), counted in memory per UTC day; once reached the endpoint answers `429` until midnight UTC. A restart resets the count, and requests already in flight can overshoot it slightly. Default: unset (no cap).
+- `AI_MAX_TOKENS` — `max_tokens` per reply (default: `16000`).
+- `AI_MAX_MESSAGES` / `AI_MAX_MESSAGE_CHARS` — max messages per request and characters per message (defaults: `40` / `8000`). Only `user` and `assistant` roles are accepted.
+- `AI_MAX_CONTEXT_CHARS` — max size of the JSON `context` sent with a question (default: `20000`; larger requests get `413`).
+
 ### Security defaults
 
 - The API binds to `127.0.0.1` and only accepts browser requests from `http://localhost:3000` by default — nothing else on your network can reach it out of the box.
