@@ -99,7 +99,7 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | Symbol search | TradingView symbol search | Yahoo Finance |
 | Full‑market screener / heatmap | TradingView scanner API (live, whole US market) | — |
 | Options chain | Nasdaq option‑chain API | Yahoo Finance |
-| News | Yahoo Finance RSS | Google News RSS |
+| News | Yahoo Finance RSS + CoinDesk / Cointelegraph / Decrypt RSS (crypto) | Google News RSS |
 | Crypto quotes & board | CoinGecko | Binance public API |
 | Crypto candles | Binance public API (klines) | — |
 | Macro (Treasury yields, VIX) | FRED (Federal Reserve) | — |
