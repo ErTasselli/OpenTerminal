@@ -283,17 +283,33 @@ marketRouter.get("/search", async (req, res) => {
 
 // ---- news ----
 
+const GLOBAL_CRYPTO_NEWS_LIMIT = 8;
+
 marketRouter.get("/news", async (req, res) => {
   const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : null;
   try {
     const data = await cached(`news:${symbol ?? "top"}`, NEWS_TTL, async () => {
       if (symbol) {
-        const lists = await Promise.allSettled([news.symbolNews(symbol), news.topNews(symbol + " stock")]);
+        const isCrypto = binance.CRYPTO_SYMBOLS.has(symbol);
+        const name = isCrypto ? binance.cryptoName(symbol) : undefined;
+        const lists = await Promise.allSettled(
+          isCrypto
+            ? [
+                // Publisher feeds before Google News so dedupe keeps their suffix-free titles.
+                news.symbolNews(symbol),
+                news.cryptoNews(symbol, name),
+                news.topNews(`${name ?? symbol} crypto`),
+              ]
+            : [news.symbolNews(symbol), news.topNews(symbol + " stock")]
+        );
         const ok = lists.filter((r) => r.status === "fulfilled").map((r) => (r as any).value);
         if (ok.length === 0) throw new Error("all news sources failed");
         return news.dedupe(ok).slice(0, 40);
       }
       const lists = await Promise.allSettled([
+        // Capped so the high-volume crypto feeds don't crowd out the macro/equity headlines;
+        // listed first so dedupe prefers them over Google News' " - Publisher" copies.
+        news.cryptoNews().then((items) => items.slice(0, GLOBAL_CRYPTO_NEWS_LIMIT)),
         news.topNews("stock market"),
         news.topNews("federal reserve economy"),
       ]);

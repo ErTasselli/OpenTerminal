@@ -10,6 +10,11 @@ const NAMES: Record<string, string> = {
 /** Plain tickers (BTC, ETH, ...) this app treats as crypto for routing quotes/history. */
 export const CRYPTO_SYMBOLS = new Set(Object.keys(NAMES).map((s) => s.replace("USDT", "")));
 
+/** Display name for a plain crypto ticker ("BTC" -> "Bitcoin"), if known. */
+export function cryptoName(symbol: string): string | undefined {
+  return NAMES[symbol.toUpperCase() + "USDT"];
+}
+
 /** Fallback crypto board built from Binance public 24hr tickers (no key required). */
 export async function markets(): Promise<CryptoRow[]> {
   const symbols = Object.keys(NAMES);
