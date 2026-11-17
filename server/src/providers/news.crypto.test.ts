@@ -99,6 +99,45 @@ describe("dedupe", () => {
     expect(out.map((i) => i.title)).toEqual(["Bitcoin slides below $60K", "Fed holds rates - Yahoo Finance"]);
   });
 
+  it("drops lightly edited syndicated copies of the same story", () => {
+    const out = dedupe([
+      [item("Warsh grapples with AI’s potential economic impact, steers clear of its inflation risk - Los Angeles Times", "Los Angeles Times", "2026-11-16T10:00:00.000Z")],
+      [
+        item("U.S. Fed chairman Warsh grapples with AI’s potential economic impact, steers clear of its inflation risk - BNN Bloomberg", "BNN Bloomberg", "2026-11-16T11:00:00.000Z"),
+        item("Fed Chairman Warsh grapples with AI’s potential economic impact, steers clear of its inflation risk - The Killeen Daily Herald", "The Killeen Daily Herald", "2026-11-16T12:00:00.000Z"),
+      ],
+    ]);
+    expect(out.map((i) => i.publisher)).toEqual(["Los Angeles Times"]);
+  });
+
+  it("keeps different articles on the same topic and headlines that differ in a key word", () => {
+    const out = dedupe([
+      [
+        item("Warsh Says Fed Is Gaming Out How AI Could Reshape Economy - WSJ", "WSJ", "2026-11-16T10:00:00.000Z"),
+        item("How will AI shake up the economy? Warsh says the Fed is starting to figure that out. - MarketWatch", "MarketWatch", "2026-11-16T10:01:00.000Z"),
+        item("Stocks rise as Fed holds rates steady", "Reuters", "2026-11-16T10:02:00.000Z"),
+        item("Stocks fall as Fed holds rates steady", "Reuters", "2026-11-16T10:03:00.000Z"),
+      ],
+    ]);
+    expect(out).toHaveLength(4);
+  });
+
+  it("keeps a short headline that only appears inside a longer, different one", () => {
+    const out = dedupe([
+      [item("Fed holds rates steady", "Reuters", "2026-11-16T10:00:00.000Z")],
+      [item("Stocks rise after Fed holds rates steady, Powell signals cuts", "CNBC", "2026-11-16T10:01:00.000Z")],
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
+  it("does not fuzzy-match very short titles", () => {
+    const out = dedupe([
+      [item("Bitcoin rallies", "CoinDesk", "2026-11-16T10:00:00.000Z")],
+      [item("Bitcoin rallies again", "Decrypt", "2026-11-16T10:01:00.000Z")],
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
   it("does not strip a trailing segment that isn't the item's publisher", () => {
     const out = dedupe([
       [item("Ethereum upgrade - what changes", "CoinDesk", "2026-11-16T10:00:00.000Z")],

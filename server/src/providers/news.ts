@@ -82,14 +82,51 @@ function withoutPublisherSuffix(item: NewsItem): string {
   return item.title.endsWith(suffix) ? item.title.slice(0, -suffix.length) : item.title;
 }
 
-/** Merge, de-duplicate by normalized title (first occurrence wins), newest first. */
+const STOPWORDS = new Set(
+  "a an and are as at be by for from in into is it its of on or over says than that the this to was with".split(" ")
+);
+
+function titleWords(title: string): Set<string> {
+  return new Set(title.split(" ").filter((w) => w && !STOPWORDS.has(w)));
+}
+
+/** Below this many meaningful words, titles are too short to compare fuzzily. */
+const MIN_WORDS_FOR_FUZZY = 4;
+
+/**
+ * Syndicated wire stories get republished with words added around the same headline
+ * ("Warsh grapples with…" vs "U.S. Fed chairman Warsh grapples with…"). Treat two
+ * titles as one story when the shorter one's words are (almost) all inside the longer
+ * one AND the two overlap substantially overall. Requiring containment rather than
+ * plain similarity keeps headlines that differ by a swapped word ("Stocks rise…" vs
+ * "Stocks fall…"); the overlap check keeps a short headline that merely appears inside
+ * a longer, different one. Different articles on the same topic score ~0.4 overlap.
+ */
+function isNearDuplicate(a: Set<string>, b: Set<string>): boolean {
+  if (a.size < MIN_WORDS_FOR_FUZZY || b.size < MIN_WORDS_FOR_FUZZY) return false;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  const containment = shared / Math.min(a.size, b.size);
+  const overlap = shared / (a.size + b.size - shared);
+  return containment >= 0.9 && overlap >= 0.6;
+}
+
+/**
+ * Merge, de-duplicate (first occurrence wins), newest first. Two titles are the same
+ * story if they match after normalization, or if their word sets are near-identical.
+ */
 export function dedupe(lists: NewsItem[][]): NewsItem[] {
   const seen = new Set<string>();
+  const keptWords: Set<string>[] = [];
   const out: NewsItem[] = [];
   for (const item of lists.flat()) {
-    const key = withoutPublisherSuffix(item).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 80);
+    const normalized = withoutPublisherSuffix(item).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const key = normalized.slice(0, 80);
     if (seen.has(key)) continue;
+    const words = titleWords(normalized);
+    if (keptWords.some((k) => isNearDuplicate(words, k))) continue;
     seen.add(key);
+    keptWords.push(words);
     out.push(item);
   }
   return out.sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
