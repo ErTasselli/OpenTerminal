@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { europeMarketScan, search } from "./tradingview.js";
+import { brazilMarketScan, europeMarketScan, search } from "./tradingview.js";
 
 function rowsFor(url: string): unknown[] {
   if (url.includes("/uk/scan")) {
@@ -75,11 +75,51 @@ describe("search exchange suffixes", () => {
           symbols: [
             { symbol: "<em>PETR4</em>", description: "Petroleo Brasileiro SA Pfd", exchange: "BMFBOVESPA", type: "stock" },
             { symbol: "AAPL", description: "Apple Inc.", exchange: "NASDAQ", type: "stock" },
+            { symbol: "VALE3", description: "Vale S.A. CEDEAR", exchange: "BYMA", type: "dr" },
           ],
         }),
       })
     );
     const results = await search("PETR4");
-    expect(results.map((r) => r.symbol)).toEqual(["PETR4.SA", "AAPL"]);
+    // The Buenos Aires CEDEAR must not stay bare, or it would later be read as the B3 stock.
+    expect(results.map((r) => r.symbol)).toEqual(["PETR4.SA", "AAPL", "VALE3.BA"]);
+  });
+});
+
+describe("brazilMarketScan", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const row = (ticker: string, marketCap: number | null, close: number, volume: number, type = "stock", name = ticker) => ({
+    s: `BMFBOVESPA:${ticker}`,
+    d: [name, close, 1.5, marketCap, type === "stock" ? "Finance" : null, volume, type],
+  });
+
+  it("keeps one row per company (most traded line), drops odd lots, adds .SA, sorts by market cap", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          row("PETR4F", 627e9, 44, 9e6),
+          row("PETR4", 627e9, 44, 30e6, "stock", "Petroleo Brasileiro SA Pfd"),
+          row("PETR3", 627e9, 47, 10e6, "stock", "Petroleo Brasileiro SA"),
+          row("VALE3", 253e9, 60, 20e6, "stock", "Vale S.A."),
+          // Unit typed as a fund, with no market cap of its own, out-trading the shares
+          row("BPAC11", null, 52, 8e6, "fund", "Banco BTG Pactual Units"),
+          row("BPAC3", 210e9, 20, 45e3, "stock", "Banco BTG Pactual SA"),
+          // ETF and real estate fund: no share lines, so not companies
+          row("BOVA11", null, 160, 9e6, "fund"),
+          row("HGLG11", null, 160, 1e5, "fund"),
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rows = await brazilMarketScan();
+
+    expect(rows.map((r) => r.symbol)).toEqual(["PETR4.SA", "VALE3.SA", "BPAC11.SA"]);
+    expect(rows[0]).toMatchObject({ name: "Petroleo Brasileiro SA Pfd", currency: "BRL", country: "Brazil" });
+    expect(rows[2]).toMatchObject({ marketCap: 210e9, sector: "Finance" });
+    expect(rows[0]).not.toHaveProperty("tradedValue");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://scanner.tradingview.com/brazil/scan");
   });
 });

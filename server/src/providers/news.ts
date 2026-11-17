@@ -1,4 +1,4 @@
-import { toProviderSymbol } from "../providerSymbol.js";
+import { b3Ticker, isB3Symbol, toProviderSymbol } from "../providerSymbol.js";
 import { XMLParser } from "fast-xml-parser";
 
 export type NewsItem = {
@@ -32,11 +32,30 @@ async function fetchRss(url: string, publisher: string, symbol: string | null): 
 
 export async function symbolNews(symbol: string): Promise<NewsItem[]> {
   const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(toProviderSymbol(symbol))}&region=US&lang=en-US`;
-  return fetchRss(url, "Yahoo Finance", symbol);
+  if (!isB3Symbol(symbol)) return fetchRss(url, "Yahoo Finance", symbol);
+  // B3 listings also get Google News' Brazilian edition, searched by the ticker
+  // as local outlets write it ("PETR4"): ~100 results where the en-US
+  // "PETR4.SA stock" search finds about a dozen. Either source may fail alone.
+  const lists = await Promise.allSettled([
+    fetchRss(url, "Yahoo Finance", symbol),
+    topNews(b3Ticker(symbol), "br"),
+  ]);
+  const ok = lists.filter((r) => r.status === "fulfilled").map((r) => (r as PromiseFulfilledResult<NewsItem[]>).value);
+  if (ok.length === 0) throw (lists[0] as PromiseRejectedResult).reason;
+  return ok.flat();
 }
 
-export async function topNews(query = "stock market"): Promise<NewsItem[]> {
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+/** Google News editions: language/country of the results. */
+const GOOGLE_NEWS_EDITIONS = {
+  us: "hl=en-US&gl=US&ceid=US:en",
+  br: "hl=pt-BR&gl=BR&ceid=BR:pt-419",
+} as const;
+
+export async function topNews(
+  query = "stock market",
+  edition: keyof typeof GOOGLE_NEWS_EDITIONS = "us"
+): Promise<NewsItem[]> {
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&${GOOGLE_NEWS_EDITIONS[edition]}`;
   return fetchRss(url, "Google News", null);
 }
 

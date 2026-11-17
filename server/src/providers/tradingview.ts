@@ -199,6 +199,79 @@ export async function europeMarketScan(limit = 1500): Promise<MarketRow[]> {
   return rows.sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0)).slice(0, limit);
 }
 
+/**
+ * Live snapshot of B3 stocks, one row per company. B3 lists each company under
+ * several lines — common (PETR3), preferred (PETR4), units bundling both
+ * (BPAC11) — plus odd-lot mirrors ("PETR4F"), all sharing one company-wide
+ * market cap, so counting each would show a company two to four times. Odd
+ * lots are dropped and, per company (the 4-letter ticker root), the line with
+ * the highest traded value is kept: that is how the market quotes the company
+ * (PETR4, ITUB4, BPAC11). There is no "common" filter, unlike the other scans,
+ * because many of those lines are preferred shares. Units come back from
+ * TradingView typed as funds, so funds are fetched too but only kept for roots
+ * that also have shares — which leaves out ETFs (BOVA11) and real estate funds
+ * (HGLG11). Market cap is taken from the share lines (units report none).
+ * Symbols carry Yahoo's ".SA" suffix so quote/chart lookups resolve them.
+ */
+export async function brazilMarketScan(limit = 1500): Promise<MarketRow[]> {
+  const res = await fetch("https://scanner.tradingview.com/brazil/scan", {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({
+      columns: ["description", "close", "change", "market_cap_basic", "sector", "volume", "type"],
+      filter: [
+        { left: "type", operation: "in_range", right: ["stock", "fund"] },
+        { left: "exchange", operation: "equal", right: "BMFBOVESPA" },
+      ],
+      sort: { sortBy: "market_cap_basic", sortOrder: "desc" },
+      range: [0, 3000],
+    }),
+  });
+  if (!res.ok) throw new Error(`tradingview scan brazil ${res.status}`);
+  const json = await res.json();
+  const rows: Array<{ s: string; d: any[] }> = json?.data ?? [];
+
+  type Company = { best: MarketRow & { tradedValue: number }; hasShares: boolean; marketCap: number | null; sector: string | null };
+  const companies = new Map<string, Company>();
+  for (const r of rows) {
+    const ticker = r.s.split(":")[1] ?? "";
+    if (!/^[A-Z]{4}\d{1,2}$/.test(ticker)) continue; // odd lots (PETR4F) and anything unexpected
+    const [name, close, change, marketCap, sector, volume, type] = r.d;
+    const isShare = type === "stock";
+    const line = {
+      symbol: `${ticker}.SA`,
+      name: name ?? ticker,
+      price: close ?? null,
+      changePercent: change ?? null,
+      marketCap: null,
+      sector: "Other",
+      volume: volume ?? null,
+      exchange: "BMFBOVESPA",
+      country: "Brazil",
+      currency: "BRL",
+      tradedValue: (close ?? 0) * (volume ?? 0),
+    };
+    const root = ticker.slice(0, 4);
+    const c = companies.get(root) ?? { best: line, hasShares: false, marketCap: null, sector: null };
+    if (line.tradedValue > c.best.tradedValue) c.best = line;
+    if (isShare) {
+      c.hasShares = true;
+      c.marketCap = Math.max(c.marketCap ?? 0, marketCap ?? 0) || c.marketCap;
+      c.sector = c.sector ?? (sector || null);
+    }
+    companies.set(root, c);
+  }
+  return [...companies.values()]
+    .filter((c) => c.hasShares)
+    .map(({ best: { tradedValue: _tradedValue, ...row }, marketCap, sector }) => ({
+      ...row,
+      marketCap,
+      sector: sector ?? "Other",
+    }))
+    .sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0))
+    .slice(0, limit);
+}
+
 export type EarningsInfo = {
   symbol: string;
   nextEarningsDate: number | null; // unix seconds
@@ -263,6 +336,9 @@ const EXCHANGE_SUFFIX: Array<{ match: RegExp; suffix: string }> = [
   { match: /^nse$/i, suffix: ".NS" }, // India (NSE)
   { match: /^bse$/i, suffix: ".BO" }, // India (BSE)
   { match: /^(bmfbovespa|bovespa|b3)$/i, suffix: ".SA" }, // Brazil (B3)
+  // Buenos Aires: its CEDEARs reuse B3-style tickers (VALE3, PETR4), which would
+  // otherwise be read as bare B3 symbols downstream and show the Brazilian listing.
+  { match: /^byma$/i, suffix: ".BA" },
 ];
 
 function yahooSuffixFor(exchange: string): string {

@@ -138,6 +138,17 @@ async function yfetch(url: string, withCrumb = false): Promise<any> {
 
 const n = (v: unknown): number | null => (typeof v === "number" && isFinite(v) ? v : null);
 
+// After B3's close Yahoo rolls its .SA listings over to a session with no trades
+// yet and reports it as open/high/low = 0 and volume 0 (only the last price is
+// real). A traded price is never 0, so read a zero day range as "no data":
+// "—" in the quote panel instead of a 0.00 open, and no candle wick down to 0.
+const tradedPrice = (v: unknown): number | null => {
+  const x = n(v);
+  return x !== null && x > 0 ? x : null;
+};
+/** Session volume, or null when the session has no range yet (see above). */
+const sessionVolume = (volume: unknown, high: unknown): number | null => (tradedPrice(high) === null ? null : n(volume));
+
 // ---- quotes ----
 
 export async function quotes(symbols: string[]): Promise<Quote[]> {
@@ -151,13 +162,13 @@ export async function quotes(symbols: string[]): Promise<Quote[]> {
     price: n(r.regularMarketPrice),
     change: n(r.regularMarketChange),
     changePercent: n(r.regularMarketChangePercent),
-    open: n(r.regularMarketOpen),
-    high: n(r.regularMarketDayHigh),
-    low: n(r.regularMarketDayLow),
+    open: tradedPrice(r.regularMarketOpen),
+    high: tradedPrice(r.regularMarketDayHigh),
+    low: tradedPrice(r.regularMarketDayLow),
     previousClose: n(r.regularMarketPreviousClose),
     bid: n(r.bid),
     ask: n(r.ask),
-    volume: n(r.regularMarketVolume),
+    volume: sessionVolume(r.regularMarketVolume, r.regularMarketDayHigh),
     avgVolume: n(r.averageDailyVolume3Month),
     marketCap: n(r.marketCap),
     pe: n(r.trailingPE),
@@ -191,12 +202,12 @@ export async function quoteFromChart(symbol: string): Promise<Quote> {
     change: price !== null && prev !== null ? price - prev : null,
     changePercent: price !== null && prev !== null && prev !== 0 ? ((price - prev) / prev) * 100 : null,
     open: null,
-    high: n(meta.regularMarketDayHigh),
-    low: n(meta.regularMarketDayLow),
+    high: tradedPrice(meta.regularMarketDayHigh),
+    low: tradedPrice(meta.regularMarketDayLow),
     previousClose: prev,
     bid: null,
     ask: null,
-    volume: n(meta.regularMarketVolume),
+    volume: sessionVolume(meta.regularMarketVolume, meta.regularMarketDayHigh),
     avgVolume: null,
     marketCap: null,
     pe: null,
@@ -227,8 +238,17 @@ export async function history(symbol: string, range: string, interval: string): 
   const q = result.indicators?.quote?.[0] ?? {};
   const candles: Candle[] = [];
   for (let i = 0; i < ts.length; i++) {
-    const [o, h, l, c] = [q.open?.[i], q.high?.[i], q.low?.[i], q.close?.[i]];
-    if (o == null || h == null || l == null || c == null) continue;
+    const c = tradedPrice(q.close?.[i]);
+    if (c === null) continue;
+    const [o, h, l] = [tradedPrice(q.open?.[i]), tradedPrice(q.high?.[i]), tradedPrice(q.low?.[i])];
+    if (o === null || h === null || l === null) {
+      // Zero/missing day range with a real close (B3 after hours, see tradedPrice()):
+      // approximate the bar from the previous close so it keeps the day's move
+      // instead of drawing a wick to 0.
+      const open = candles.length > 0 ? candles[candles.length - 1].close : c;
+      candles.push({ time: ts[i], open, high: Math.max(open, c), low: Math.min(open, c), close: c, volume: 0 });
+      continue;
+    }
     candles.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: q.volume?.[i] ?? 0 });
   }
   return candles;

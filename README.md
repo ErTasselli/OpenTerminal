@@ -103,6 +103,8 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | Crypto quotes & board | CoinGecko | Binance public API |
 | Crypto candles | Binance public API (klines) | — |
 | Macro (Treasury yields, VIX) | FRED (Federal Reserve) | — |
+| Brazil macro (Selic target, IPCA 12m) | Banco Central do Brasil SGS API | — |
+| Brazil (B3) screener / heatmap | TradingView scanner API (live, B3) | — |
 | Economic calendar (schedule, forecast, previous) | Forex Factory public feed | — |
 | Economic calendar (actual — Fed / ECB / CPI / NFP only) | FRED (Federal Reserve) | — |
 | Earnings calendar (next/last date, EPS estimate) | TradingView scanner API | — |

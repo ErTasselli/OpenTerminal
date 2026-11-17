@@ -1,3 +1,4 @@
+import { isUsListing } from "../providerSymbol.js";
 import type { Quote, Candle } from "./yahoo.js";
 
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
@@ -71,6 +72,9 @@ async function resolveAssetClass(symbol: string): Promise<"stocks" | "etf"> {
 }
 
 export async function quote(symbol: string): Promise<Quote> {
+  // Nasdaq only covers US-listed securities: asking it for PETR4.SA, EURBRL=X or
+  // ^BVSP costs two round-trips that are certain to fail, on every refresh.
+  if (!isUsListing(symbol)) throw new Error(`nasdaq: ${symbol} is not a US listing`);
   const assetclass = await resolveAssetClass(symbol);
   const [info, summary] = await Promise.all([
     nfetch(`https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/info?assetclass=${assetclass}`),

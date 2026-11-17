@@ -9,6 +9,23 @@ type Portfolio = { id: number; name: string };
 type Position = { symbol: string; quantity: number; avgCost: number; realizedPnl: number };
 type Tx = { id: number; symbol: string; side: string; quantity: number; price: number; executed_at: string };
 
+// Quotes for London, Johannesburg and Tel Aviv come in the minor unit (pence,
+// cents, agorot); their FX pair is quoted for the major unit.
+const MINOR_UNITS: Record<string, { code: string; scale: number }> = {
+  GBp: { code: "GBP", scale: 0.01 },
+  GBX: { code: "GBP", scale: 0.01 },
+  ZAc: { code: "ZAR", scale: 0.01 },
+  ILA: { code: "ILS", scale: 0.01 },
+};
+
+/** The ISO currency a quote is priced in, and how many of those one quoted unit is. */
+function currencyUnit(currency: string | null | undefined): { code: string; scale: number } {
+  if (!currency) return { code: "USD", scale: 1 };
+  return MINOR_UNITS[currency] ?? { code: currency.toUpperCase(), scale: 1 };
+}
+
+const fxSymbol = (code: string) => `${code}USD=X`;
+
 export default function PortfolioWidget() {
   const qc = useQueryClient();
   const [portfolioId, setPortfolioId] = useState<number | null>(null);
@@ -41,6 +58,21 @@ export default function PortfolioWidget() {
     refetchInterval: 30_000,
   });
 
+  // Positions can be priced in different currencies (AAPL in USD, PETR4.SA in BRL),
+  // so totals are converted to USD before summing; per-row values stay in the
+  // instrument's own currency. Costs are assumed to be entered in that currency too.
+  const foreignCurrencies = [
+    ...new Set(quotes.map((q) => currencyUnit(q.currency).code).filter((c) => c !== "USD")),
+  ].sort();
+  const { data: fxQuotes = [] } = useQuery({
+    queryKey: ["pf-fx", foreignCurrencies.join(",")],
+    queryFn: () => apiGet<Quote[]>(`/api/quotes?symbols=${symbolsParam(foreignCurrencies.map(fxSymbol))}`),
+    enabled: foreignCurrencies.length > 0,
+    refetchInterval: 60_000,
+  });
+  const usdPer = (code: string): number | null =>
+    code === "USD" ? 1 : fxQuotes.find((q) => q.symbol === fxSymbol(code))?.price ?? null;
+
   const addTx = useMutation({
     mutationFn: () =>
       apiPost(`/api/portfolios/${pid}/transactions`, {
@@ -57,13 +89,20 @@ export default function PortfolioWidget() {
     },
   });
 
+  const missingFx = new Set<string>();
   const totals = positions.reduce(
     (acc, p) => {
       const q = quotes.find((x) => x.symbol === p.symbol);
-      const mv = (q?.price ?? p.avgCost) * p.quantity;
-      acc.marketValue += mv;
-      acc.cost += p.avgCost * p.quantity;
-      acc.realized += p.realizedPnl;
+      const unit = currencyUnit(q?.currency);
+      const rate = usdPer(unit.code);
+      if (rate === null) {
+        missingFx.add(unit.code);
+        return acc;
+      }
+      const toUsd = unit.scale * rate;
+      acc.marketValue += (q?.price ?? p.avgCost) * p.quantity * toUsd;
+      acc.cost += p.avgCost * p.quantity * toUsd;
+      acc.realized += p.realizedPnl * toUsd;
       return acc;
     },
     { marketValue: 0, cost: 0, realized: 0 }
@@ -82,7 +121,8 @@ export default function PortfolioWidget() {
           TRANSACTIONS
         </button>
         <span className="ml-auto">
-          MV <span className="amber">{fmt(totals.marketValue)}</span>{" "}
+          {missingFx.size > 0 && <span className="dim">excl. {[...missingFx].join(", ")} (no FX) </span>}
+          MV <span className="dim">USD</span> <span className="amber">{fmt(totals.marketValue)}</span>{" "}
           <span className="dim">Unrl</span> <span className={pctClass(unrealized)}>{fmt(unrealized)}</span>{" "}
           <span className="dim">Rlzd</span> <span className={pctClass(totals.realized)}>{fmt(totals.realized)}</span>
         </span>
@@ -118,7 +158,9 @@ export default function PortfolioWidget() {
               const upnl = last !== null ? (last - p.avgCost) * p.quantity : null;
               return (
                 <tr key={p.symbol}>
-                  <td className="font-bold">{p.symbol}</td>
+                  <td className="font-bold">
+                    {p.symbol} <span className="dim font-normal">{q?.currency ?? ""}</span>
+                  </td>
                   <td>{fmt(p.quantity, 4)}</td>
                   <td>{fmt(p.avgCost)}</td>
                   <td>{fmt(last)}</td>
