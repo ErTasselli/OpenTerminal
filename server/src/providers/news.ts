@@ -1,3 +1,4 @@
+import { toProviderSymbol } from "../providerSymbol.js";
 import { XMLParser } from "fast-xml-parser";
 
 export type NewsItem = {
@@ -30,7 +31,7 @@ async function fetchRss(url: string, publisher: string, symbol: string | null): 
 }
 
 export async function symbolNews(symbol: string): Promise<NewsItem[]> {
-  const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`;
+  const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(toProviderSymbol(symbol))}&region=US&lang=en-US`;
   return fetchRss(url, "Yahoo Finance", symbol);
 }
 

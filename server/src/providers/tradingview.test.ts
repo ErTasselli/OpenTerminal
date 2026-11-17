@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { europeMarketScan } from "./tradingview.js";
+import { europeMarketScan, search } from "./tradingview.js";
 
 function rowsFor(url: string): unknown[] {
   if (url.includes("/uk/scan")) {
@@ -60,5 +60,26 @@ describe("europeMarketScan", () => {
     // Switzerland's fetch resolves ok:false above — europeMarketScan must not
     // reject the whole scan because of it (Promise.allSettled).
     expect(rows.length).toBe(2);
+  });
+});
+
+describe("search exchange suffixes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("maps B3 (BMFBOVESPA) listings to Yahoo's .SA suffix", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          symbols: [
+            { symbol: "<em>PETR4</em>", description: "Petroleo Brasileiro SA Pfd", exchange: "BMFBOVESPA", type: "stock" },
+            { symbol: "AAPL", description: "Apple Inc.", exchange: "NASDAQ", type: "stock" },
+          ],
+        }),
+      })
+    );
+    const results = await search("PETR4");
+    expect(results.map((r) => r.symbol)).toEqual(["PETR4.SA", "AAPL"]);
   });
 });

@@ -262,6 +262,7 @@ const EXCHANGE_SUFFIX: Array<{ match: RegExp; suffix: string }> = [
   { match: /^tse$/i, suffix: ".T" }, // Tokyo
   { match: /^nse$/i, suffix: ".NS" }, // India (NSE)
   { match: /^bse$/i, suffix: ".BO" }, // India (BSE)
+  { match: /^(bmfbovespa|bovespa|b3)$/i, suffix: ".SA" }, // Brazil (B3)
 ];
 
 function yahooSuffixFor(exchange: string): string {

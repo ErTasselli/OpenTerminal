@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { cached, cacheGet, cacheStore, staleGet } from "../cache.js";
 import { withFallback } from "../providers/registry.js";
+import { toProviderSymbol } from "../providerSymbol.js";
 import * as yahoo from "../providers/yahoo.js";
 import * as stooq from "../providers/stooq.js";
 import * as nasdaq from "../providers/nasdaq.js";
@@ -217,7 +218,17 @@ marketRouter.get("/quotes", async (req, res) => {
     .slice(0, 150);
   if (symbols.length === 0) return res.status(400).json({ error: "symbols required" });
   try {
-    const data = await getQuotes(symbols);
+    // Bare B3 tickers are fetched under their provider symbol (PETR4 -> PETR4.SA)
+    // but answered under the symbol requested, since clients match quotes back to
+    // their own symbols. Everything else passes through unchanged.
+    const aliases = symbols.filter((s) => toProviderSymbol(s) !== s);
+    const direct = new Set(symbols.filter((s) => toProviderSymbol(s) === s));
+    const quotes = await getQuotes([...new Set(symbols.map(toProviderSymbol))]);
+    const data = quotes.filter((q) => direct.has(q.symbol) || !aliases.some((a) => toProviderSymbol(a) === q.symbol));
+    for (const alias of aliases) {
+      const q = quotes.find((x) => x.symbol === toProviderSymbol(alias));
+      if (q) data.push({ ...q, symbol: alias });
+    }
     if (data.length === 0) throw new Error("no quotes from any provider");
     res.json(data);
   } catch (err) {
@@ -228,7 +239,7 @@ marketRouter.get("/quotes", async (req, res) => {
 // ---- history / candles ----
 
 marketRouter.get("/history/:symbol", async (req, res) => {
-  const symbol = req.params.symbol.toUpperCase();
+  const symbol = toProviderSymbol(req.params.symbol.toUpperCase());
   const rangeKey = String(req.query.range ?? "6M");
   try {
     const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
