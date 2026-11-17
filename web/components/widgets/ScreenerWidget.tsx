@@ -12,9 +12,13 @@ type Row = {
   sector: string;
 };
 
+
+// Market caps come back in each market's currency: USD for US, converted to EUR
+// for the merged European scan, BRL for B3.
+const MCAP_CURRENCY = { us: "$", eu: "€", br: "R$" } as const;
 export default function ScreenerWidget() {
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
-  const [market, setMarket] = useState<"us" | "eu">("us");
+  const [market, setMarket] = useState<"us" | "eu" | "br">("us");
   const [sector, setSector] = useState("");
   const [changeMin, setChangeMin] = useState("");
   const [marketCapMinB, setMarketCapMinB] = useState("");
@@ -59,7 +63,7 @@ export default function ScreenerWidget() {
     <div>
       <div className="flex gap-2 p-1 flex-wrap items-center">
         <div className="flex gap-1">
-          {(["us", "eu"] as const).map((m) => (
+          {(["us", "eu", "br"] as const).map((m) => (
             <button key={m} className={`term-btn ${market === m ? "active" : ""}`} onClick={() => setMarket(m)}>
               {m.toUpperCase()}
             </button>
@@ -72,7 +76,7 @@ export default function ScreenerWidget() {
           ))}
         </select>
         <input className="w-20" placeholder="Chg% min" value={changeMin} onChange={(e) => setChangeMin(e.target.value)} />
-        <input className="w-24" placeholder="MCap min ($B)" value={marketCapMinB} onChange={(e) => setMarketCapMinB(e.target.value)} />
+        <input className="w-24" placeholder={`MCap min (${MCAP_CURRENCY[market]}B)`} value={marketCapMinB} onChange={(e) => setMarketCapMinB(e.target.value)} />
         <input className="w-24" placeholder="Vol min (M)" value={volumeMinM} onChange={(e) => setVolumeMinM(e.target.value)} />
         <span className="dim ml-auto">{isLoading ? "…" : `${data.length} results`}</span>
       </div>

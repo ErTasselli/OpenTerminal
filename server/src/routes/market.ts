@@ -4,8 +4,10 @@ import { withFallback } from "../providers/registry.js";
 import * as yahoo from "../providers/yahoo.js";
 import * as stooq from "../providers/stooq.js";
 import * as nasdaq from "../providers/nasdaq.js";
+import { isForeignListing, isUsListing, toProviderSymbol } from "../providerSymbol.js";
 import * as fred from "../providers/fred.js";
 import * as ecb from "../providers/ecb.js";
+import * as bcb from "../providers/bcb.js";
 import * as tradingview from "../providers/tradingview.js";
 import * as coingecko from "../providers/coingecko.js";
 import * as binance from "../providers/binance.js";
@@ -217,7 +219,17 @@ marketRouter.get("/quotes", async (req, res) => {
     .slice(0, 150);
   if (symbols.length === 0) return res.status(400).json({ error: "symbols required" });
   try {
-    const data = await getQuotes(symbols);
+    // Bare B3 tickers are fetched under their provider symbol (PETR4 -> PETR4.SA)
+    // but answered under the symbol requested, since clients match quotes back to
+    // their own symbols. Everything else passes through unchanged.
+    const aliases = symbols.filter((s) => toProviderSymbol(s) !== s);
+    const direct = new Set(symbols.filter((s) => toProviderSymbol(s) === s));
+    const quotes = await getQuotes([...new Set(symbols.map(toProviderSymbol))]);
+    const data = quotes.filter((q) => direct.has(q.symbol) || !aliases.some((a) => toProviderSymbol(a) === q.symbol));
+    for (const alias of aliases) {
+      const q = quotes.find((x) => x.symbol === toProviderSymbol(alias));
+      if (q) data.push({ ...q, symbol: alias });
+    }
     if (data.length === 0) throw new Error("no quotes from any provider");
     res.json(data);
   } catch (err) {
@@ -227,8 +239,13 @@ marketRouter.get("/quotes", async (req, res) => {
 
 // ---- history / candles ----
 
+/** A US-only provider attempt, dropped for symbols that provider cannot serve. */
+function usOnly<T>(symbol: string, attempt: [string, () => Promise<T>]): Array<[string, () => Promise<T>]> {
+  return isUsListing(symbol) ? [attempt] : [];
+}
+
 marketRouter.get("/history/:symbol", async (req, res) => {
-  const symbol = req.params.symbol.toUpperCase();
+  const symbol = toProviderSymbol(req.params.symbol.toUpperCase());
   const rangeKey = String(req.query.range ?? "6M");
   try {
     const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
@@ -237,7 +254,7 @@ marketRouter.get("/history/:symbol", async (req, res) => {
         : isVix(symbol)
         ? vixHistory(rangeKey)
         : withFallback([
-            ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
+            ...usOnly(symbol, ["nasdaq", () => nasdaq.history(symbol, rangeKey)]),
             ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],
             ["stooq", () => stooq.history(symbol)],
           ])
@@ -318,12 +335,27 @@ marketRouter.get("/econ-calendar", async (req, res) => {
   }
 });
 
+// ---- US-only data (options, earnings history, insider filings) ----
+
+/**
+ * These datasets (options chains, earnings history, SEC filings) only cover US
+ * markets. Answer a foreign listing with a clear 404 instead of trying
+ * providers that cannot have it and reporting "all providers are temporarily
+ * unavailable". Indexes are let through: Yahoo serves ^SPX and ^VIX options.
+ */
+function rejectNonUs(res: any, symbol: string, what: string): boolean {
+  if (!isForeignListing(symbol)) return false;
+  res.status(404).json({ error: `${what} is only available for US listings.` });
+  return true;
+}
+
 // ---- options ----
 
 marketRouter.get("/options/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const expiry = req.query.expiry ? String(req.query.expiry) : undefined;
   try {
+    if (rejectNonUs(res, symbol, "Options data")) return;
     const data = await cached(`options:${symbol}:${expiry ?? "front"}`, 60_000, () =>
       withFallback([
         ["nasdaq", () => nasdaq.optionChain(symbol, expiry)],
@@ -437,8 +469,43 @@ const EU_INDEX_PROXIES: Record<string, string> = {
   EWI: "Italy (EWI)",
 };
 
+const BR_INDEXES: Record<string, string> = {
+  "^BVSP": "Ibovespa",
+  "IFIX.SA": "IFIX (real estate funds)",
+  "SMAL11.SA": "Small Caps (SMAL11)",
+  "USDBRL=X": "USD/BRL",
+  "EURBRL=X": "EUR/BRL",
+};
+
+// Yahoo's B3 quotes are 15-minute delayed and the macro widget polls every
+// second, so serving this from a short cache costs nothing and keeps those
+// polls from turning into one Yahoo request per second.
+const BR_MACRO_TTL = 15_000;
+
+/** No free source publishes a current Brazilian yield curve (BCB's DI swap
+ * series stopped in 2019), so the panel shows the Selic target and IPCA instead. */
+async function brazilMacro() {
+  const [selic, ipca, quotes] = await Promise.all([
+    cached(`bcb:${bcb.BCB_SERIES.selicTarget}`, 3_600_000, () => bcb.latest(bcb.BCB_SERIES.selicTarget)).catch(() => null),
+    cached(`bcb:${bcb.BCB_SERIES.ipca12m}`, 3_600_000, () => bcb.latest(bcb.BCB_SERIES.ipca12m)).catch(() => null),
+    getQuotes(Object.keys(BR_INDEXES)),
+  ]);
+  const indexes = quotes.map((q) => ({
+    symbol: q.symbol,
+    label: BR_INDEXES[q.symbol] ?? q.symbol,
+    price: q.price,
+    changePercent: q.changePercent,
+  }));
+  if (indexes.length === 0 && !selic && !ipca) throw new Error("no BR macro data from any provider");
+  return { yields: [], vix: null, indexes, policyRate: selic?.value ?? null, inflation: ipca?.value ?? null };
+}
+
 marketRouter.get("/macro", async (req, res) => {
   try {
+    if (req.query.region === "br") {
+      res.json(await cached("macro:br", BR_MACRO_TTL, brazilMacro));
+      return;
+    }
     if (req.query.region === "eu") {
       const [yieldResults, policyRate, inflation, quotes] = await Promise.all([
         Promise.allSettled(
@@ -503,8 +570,10 @@ marketRouter.get("/macro", async (req, res) => {
 // ?market=eu switches from the whole-US scan to the merged major-European-
 // exchanges scan (see tradingview.europeMarketScan).
 
-function marketParam(req: any): "us" | "eu" {
-  return req.query.market === "eu" ? "eu" : "us";
+type Market = "us" | "eu" | "br";
+
+function marketParam(req: any): Market {
+  return req.query.market === "eu" ? "eu" : req.query.market === "br" ? "br" : "us";
 }
 
 // TradingView reports market cap in each stock's own listing currency (SEK,
@@ -530,7 +599,8 @@ async function eurFxRates(): Promise<Record<string, number>> {
   return rates;
 }
 
-async function marketRows(market: "us" | "eu"): Promise<tradingview.MarketRow[]> {
+async function marketRows(market: Market): Promise<tradingview.MarketRow[]> {
+  if (market === "br") return cached("marketscan:br", 5_000, () => tradingview.brazilMarketScan(1500));
   if (market === "eu") {
     return cached("marketscan:eu", 5_000, async () => {
       const [rows, fx] = await Promise.all([tradingview.europeMarketScan(1500), eurFxRates()]);
@@ -723,6 +793,7 @@ marketRouter.get("/calendar", async (req, res) => {
 
 marketRouter.get("/earnings-history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
+  if (rejectNonUs(res, symbol, "Earnings history")) return;
   try {
     const data = await cached(`earnings-history:${symbol}`, 3_600_000, async () => {
       const [surprises, candles] = await Promise.all([
@@ -761,6 +832,8 @@ marketRouter.get("/earnings-history/:symbol", async (req, res) => {
 
 marketRouter.get("/short-volume/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
+  // FINRA's Reg SHO file only covers US listings; null is the "no data" answer.
+  if (isForeignListing(symbol)) return res.json(null);
   try {
     const day = await cached("finra-shortvol-day", 6 * 3_600_000, () => finra.latestDay());
     const row = day.get(symbol);
@@ -775,6 +848,7 @@ marketRouter.get("/short-volume/:symbol", async (req, res) => {
 
 marketRouter.get("/insider/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
+  if (rejectNonUs(res, symbol, "Insider trading data (SEC Form 4)")) return;
   try {
     const data = await cached(`insider:${symbol}`, 3_600_000, () => secedgar.insiderTransactions(symbol));
     res.json(data);

@@ -11,7 +11,7 @@ type Cell = { symbol: string; name: string | null; sector: string; marketCap: nu
 export default function HeatmapWidget() {
   const ref = useRef<HTMLDivElement>(null);
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
-  const [market, setMarket] = useState<"us" | "eu">("us");
+  const [market, setMarket] = useState<"us" | "eu" | "br">("us");
   const { data, error } = useQuery({
     queryKey: ["heatmap", market],
     queryFn: () => apiGet<Cell[]>(`/api/heatmap?market=${market}`),
@@ -126,13 +126,18 @@ export default function HeatmapWidget() {
   return (
     <div className="flex flex-col h-full">
       <div className="flex gap-1 p-1 shrink-0">
-        {(["us", "eu"] as const).map((m) => (
+        {(["us", "eu", "br"] as const).map((m) => (
           <button key={m} className={`term-btn ${market === m ? "active" : ""}`} onClick={() => setMarket(m)}>
             {m.toUpperCase()}
           </button>
         ))}
       </div>
-      <div className="flex-1 min-h-0">
+      {/* overflow-hidden: the treemap is drawn at this box's exact size, so it must never
+          contribute to the panel's scroll size. Otherwise a 1px overshoot shows the
+          panel's scrollbars, the box shrinks by their width, the map is redrawn
+          smaller, the scrollbars go away, it grows back — a resize loop that makes
+          the heatmap visibly shake. */}
+      <div className="flex-1 min-h-0 overflow-hidden">
         {error ? (
           <div className="p-2 down">Error: {(error as Error).message}</div>
         ) : !data ? (

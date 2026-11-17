@@ -57,6 +57,7 @@ export default function TopBar() {
       <Clock tz="Europe/Rome" label="MIL" />
       <Clock tz="Europe/London" label="LDN" />
       <Clock tz="Asia/Tokyo" label="TYO" />
+      <Clock tz="America/Sao_Paulo" label="SAO" />
       <button
         className="term-btn flex-1 max-w-md text-left dim"
         onClick={() => setCommandOpen(true)}
