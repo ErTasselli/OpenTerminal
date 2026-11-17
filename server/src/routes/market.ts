@@ -19,7 +19,6 @@ export const marketRouter = Router();
 const QUOTE_TTL = 1_000;
 const HISTORY_TTL = 20_000;
 const NEWS_TTL = 60_000;
-const GLOBAL_CRYPTO_NEWS_LIMIT = 8;
 
 function fail(req: any, res: any, err: unknown) {
   const detail = err instanceof Error ? err.message : String(err);
@@ -283,6 +282,8 @@ marketRouter.get("/search", async (req, res) => {
 });
 
 // ---- news ----
+
+const GLOBAL_CRYPTO_NEWS_LIMIT = 8;
 
 marketRouter.get("/news", async (req, res) => {
   const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : null;
