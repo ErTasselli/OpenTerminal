@@ -31,6 +31,35 @@ if (process.env.TRUST_PROXY === "1") {
 // origin.
 const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
 app.use(cors({ origin: webOrigin }));
+
+// /api/ai is mounted ahead of the blanket express.json() below, and handles its own
+// body-parsing with a larger limit -- see the comment on that limit further down. Since
+// aiRouter's handler always sends a response itself (it never calls next()), a request
+// under this path never falls through to the blanket parser after it; every other path
+// just skips this whole app.use (path doesn't match) and reaches the blanket one as before.
+app.use(
+  "/api/ai",
+  // requireApiKey and rateLimit both run off the request header/IP alone -- neither
+  // touches the body -- so they're deliberately placed ahead of the larger json()
+  // parser below. An unauthenticated or rate-limited caller is rejected before this
+  // process ever spends CPU/memory parsing their body, same as every other protected
+  // route below (whose body-parsing happens later, via the blanket express.json()).
+  requireApiKey,
+  rateLimit({ windowMs: 60_000, max: 10 }),
+  // A screenshot pasted into the AI Assistant's chat input (#29) travels as an inline
+  // base64 image part on ChatMessage.content. MAX_IMAGE_BYTES (llm/types.ts) bounds one
+  // image at 15MB raw, which *base64-encodes to exactly 20MB* (15MB is a multiple of 3,
+  // so there's no rounding to even help) -- before counting the rest of the JSON body
+  // (field names, role/type tags, conversation history, `context`). A flat "20mb" limit
+  // would give that exactly-20MB image zero room to fit inside its own request, so
+  // /api/ai alone gets a substantially larger cap; every other route below keeps the
+  // blanket express.json()'s small default, so this doesn't widen the body-size DoS
+  // surface for endpoints that never take an image (in particular the unauthenticated,
+  // keyless /api market routes).
+  express.json({ limit: "40mb" }),
+  aiRouter
+);
+
 app.use(express.json());
 
 // No API key here by design (market.ts routes proxy free, keyless public data),
@@ -44,12 +73,6 @@ app.use("/api/portfolios", requireApiKey, portfolioRouter);
 app.use("/api/portfolios", requireApiKey, pendingActionsRouter);
 app.use("/api/memory", requireApiKey, memoryRouter);
 app.use("/api/audit-log", requireApiKey, auditLogRouter);
-app.use(
-  "/api/ai",
-  requireApiKey,
-  rateLimit({ windowMs: 60_000, max: 10 }),
-  aiRouter
-);
 
 app.get("/api/status", (_req, res) => {
   res.json({

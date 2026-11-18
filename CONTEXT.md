@@ -27,3 +27,6 @@ A distilled, AI-authored note that the assistant saves on its own to recall in l
 
 **Audit Log Entry**:
 An append-only record of one unit of AI activity — a full chat transcript, a Tool Call, a Pending Action lifecycle event, or a Memory Entry write — plus call metadata and failures. Audit Log Entries have no update or delete path, including for the user, and are retained forever.
+
+**Vision Model**:
+The vision-capable model named by `OLLAMA_VISION_MODEL`, used only under `LLM_PROVIDER=ollama-cloud` for a chat turn whose content includes an image part, in place of that provider's regular `LLM_MODEL` (which may be text-only). Not a second Active Provider — this is a per-turn model choice, decided solely by whether the turn carries an image; Anthropic's Claude models see images natively under the regular `LLM_MODEL` and never need this. Images are request-only: never persisted to disk and never written to the Audit Log.

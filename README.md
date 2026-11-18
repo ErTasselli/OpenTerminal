@@ -150,8 +150,11 @@ npm run dev
 | `OLLAMA_API_KEY` | `ollama-cloud` | — |
 | `OLLAMA_BASE_URL` | `ollama-cloud` | `https://ollama.com` |
 | `LLM_MODEL` | whichever provider is active | `claude-opus-4-8` (Anthropic) / `gpt-oss:120b` (Ollama Cloud) |
+| `OLLAMA_VISION_MODEL` | `ollama-cloud`, only when a chat turn has an image attached | — |
 
 Without credentials for the active provider, everything else still works — the AI widget just shows a friendly "unavailable" message instead of failing.
+
+You can paste or drag a screenshot into the AI Assistant's chat input and ask about it. Anthropic's Claude models see images natively under `LLM_MODEL`. Under `LLM_PROVIDER=ollama-cloud`, an image-bearing turn routes to `OLLAMA_VISION_MODEL` instead — the regular `LLM_MODEL` for that provider may be text-only (e.g. the `gpt-oss:120b` default), so a separate, vision-capable model (e.g. a Llama vision model) needs naming explicitly. If an image is attached and `OLLAMA_VISION_MODEL` isn't set, the chat 503s with an actionable message rather than sending the image to a model that can't see it. Images never touch disk and are never written to the Audit Log — they travel in the request only.
 
 One more knob, standard for the Anthropic SDK and picked up automatically:
 

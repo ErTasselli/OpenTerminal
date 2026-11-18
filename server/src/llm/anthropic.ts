@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { LlmChatRequest, LlmChatResponse, LlmProvider, ToolDef } from "./types.js";
+import type { ChatMessage, ChatMessagePart, LlmChatRequest, LlmChatResponse, LlmProvider, ToolDef } from "./types.js";
 import { withContext } from "./types.js";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
@@ -7,6 +7,25 @@ const DEFAULT_MODEL = "claude-opus-4-8";
 /** Neutral tool def -> Anthropic's `tools` wire format (JSON schema under `input_schema`). */
 function toAnthropicTool(tool: ToolDef) {
   return { name: tool.name, description: tool.description, input_schema: tool.parameters };
+}
+
+/** Neutral content part -> Anthropic's content-block wire format. `mimeType` is validated
+ * against Anthropic's own accepted `media_type` set upstream (see validateImagePart in
+ * types.ts), so the cast here is safe. */
+function toAnthropicContentBlock(part: ChatMessagePart): Anthropic.ContentBlockParam {
+  return part.type === "text"
+    ? { type: "text", text: part.text }
+    : {
+        type: "image",
+        source: { type: "base64", media_type: part.mimeType as Anthropic.Base64ImageSource["media_type"], data: part.data },
+      };
+}
+
+/** Neutral ChatMessage -> Anthropic's MessageParam wire format. Plain-string content (the
+ * common case) passes through unchanged; array content maps to content blocks. */
+function toAnthropicMessage(message: ChatMessage): Anthropic.MessageParam {
+  if (typeof message.content === "string") return { role: message.role, content: message.content };
+  return { role: message.role, content: message.content.map(toAnthropicContentBlock) };
 }
 
 export const anthropicProvider: LlmProvider = {
@@ -20,16 +39,16 @@ export const anthropicProvider: LlmProvider = {
     return "set ANTHROPIC_API_KEY on the server.";
   },
 
-  async chat({ system, messages, context, tools }: LlmChatRequest): Promise<LlmChatResponse> {
+  async chat({ system, messages, context, tools, model }: LlmChatRequest): Promise<LlmChatResponse> {
     // A fresh client per call (rather than a module-level singleton) so it always
     // picks up the current ANTHROPIC_API_KEY / global fetch — important for tests.
     const client = new Anthropic();
     const response = await client.messages.create({
-      model: process.env.LLM_MODEL || DEFAULT_MODEL,
+      model: model || process.env.LLM_MODEL || DEFAULT_MODEL,
       max_tokens: 16000,
       thinking: { type: "adaptive" },
       system,
-      messages: withContext(messages, context),
+      messages: withContext(messages, context).map(toAnthropicMessage),
       ...(tools && tools.length > 0 ? { tools: tools.map(toAnthropicTool) } : {}),
     });
     // Present on both a normal response and a refusal -- used for the Audit Log Entry's

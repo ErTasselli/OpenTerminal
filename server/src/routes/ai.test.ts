@@ -302,4 +302,97 @@ describe("POST /api/ai/chat", () => {
       });
     });
   });
+
+  describe("image input (#29)", () => {
+    const IMAGE_PART = { type: "image", mimeType: "image/png", data: "aGVsbG8=" };
+
+    it("400s a request with an unsupported image mime type, before touching any provider", async () => {
+      const handler = getHandler("/chat");
+      const req = {
+        body: { messages: [{ role: "user", content: [{ type: "image", mimeType: "image/bmp", data: "aGVsbG8=" }] }] },
+      } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect((res.json as any).mock.calls[0][0].error).toMatch(/image\/bmp/);
+    });
+
+    it("routes an image-bearing turn under ollama-cloud to OLLAMA_VISION_MODEL, not LLM_MODEL", async () => {
+      process.env.LLM_PROVIDER = "ollama-cloud";
+      process.env.OLLAMA_API_KEY = "test-key";
+      process.env.LLM_MODEL = "gpt-oss:120b";
+      process.env.OLLAMA_VISION_MODEL = "llama3.2-vision";
+      const fetchMock = fakeFetch(200, { message: { content: "that's a chart of AAPL" } });
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = {
+        body: { messages: [{ role: "user", content: [{ type: "text", text: "what is this?" }, IMAGE_PART] }] },
+      } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.status).not.toHaveBeenCalledWith(503);
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.model).toBe("llama3.2-vision");
+      delete process.env.OLLAMA_VISION_MODEL;
+    });
+
+    it("503s with an actionable message when an image is attached under ollama-cloud but OLLAMA_VISION_MODEL is unset", async () => {
+      process.env.LLM_PROVIDER = "ollama-cloud";
+      process.env.OLLAMA_API_KEY = "test-key";
+      const fetchMock = fakeFetch(200, { message: { content: "should never be reached" } });
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = {
+        body: { messages: [{ role: "user", content: [IMAGE_PART] }] },
+      } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect((res.json as any).mock.calls[0][0].error).toMatch(/OLLAMA_VISION_MODEL/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("does not require OLLAMA_VISION_MODEL for an image-bearing turn under anthropic", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = fakeFetch(200, { stop_reason: "end_turn", content: [{ type: "text", text: "that's a chart" }] });
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = {
+        body: { messages: [{ role: "user", content: [IMAGE_PART] }] },
+      } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.status).not.toHaveBeenCalledWith(503);
+      expect(res.json).toHaveBeenCalledWith({ text: "that's a chart" });
+    });
+
+    it("never writes raw image bytes into the Audit Log's chat detail", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      vi.stubGlobal(
+        "fetch",
+        fakeFetch(200, { stop_reason: "end_turn", content: [{ type: "text", text: "that's a chart" }] })
+      );
+      const { db } = await import("../db.js");
+      const handler = getHandler("/chat");
+      const req = {
+        body: { messages: [{ role: "user", content: [{ type: "text", text: "what is this?" }, IMAGE_PART] }] },
+      } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      const row = db.prepare("SELECT detail FROM audit_log WHERE event_type = 'chat' ORDER BY id DESC LIMIT 1").get() as {
+        detail: string;
+      };
+      expect(row.detail).not.toContain("aGVsbG8=");
+    });
+  });
 });

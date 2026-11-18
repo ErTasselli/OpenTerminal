@@ -1,9 +1,26 @@
-import type { LlmChatRequest, LlmChatResponse, LlmProvider, ToolDef } from "./types.js";
+import type { ChatMessage, LlmChatRequest, LlmChatResponse, LlmProvider, ToolDef } from "./types.js";
 import { withContext } from "./types.js";
 
 const DEFAULT_MODEL = "gpt-oss:120b";
 const DEFAULT_BASE_URL = "https://ollama.com";
 const REQUEST_TIMEOUT_MS = 120_000;
+
+// Neutral ChatMessage -> Ollama's native /api/chat shape: a single `content` string
+// plus a sibling `images` array of bare base64 strings (no data: URI prefix, no
+// per-image mimeType -- Ollama's native API doesn't take one). Plain-string content
+// (the common case) passes through unchanged; array content's text parts join into
+// `content` and its image parts' data become `images`.
+function toOllamaMessage(message: ChatMessage): { role: string; content: string; images?: string[] } {
+  if (typeof message.content === "string") return { role: message.role, content: message.content };
+  const text = message.content
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("\n");
+  const images = message.content
+    .filter((p): p is { type: "image"; mimeType: string; data: string } => p.type === "image")
+    .map((p) => p.data);
+  return { role: message.role, content: text, ...(images.length > 0 ? { images } : {}) };
+}
 
 class OllamaHttpError extends Error {
   constructor(readonly status: number, message: string) {
@@ -48,7 +65,7 @@ export const ollamaProvider: LlmProvider = {
     return "set OLLAMA_API_KEY on the server.";
   },
 
-  async chat({ system, messages, context, tools }: LlmChatRequest): Promise<LlmChatResponse> {
+  async chat({ system, messages, context, tools, model }: LlmChatRequest): Promise<LlmChatResponse> {
     const baseUrl = process.env.OLLAMA_BASE_URL || DEFAULT_BASE_URL;
     const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/chat`, {
       method: "POST",
@@ -57,8 +74,8 @@ export const ollamaProvider: LlmProvider = {
         Authorization: `Bearer ${process.env.OLLAMA_API_KEY}`,
       },
       body: JSON.stringify({
-        model: process.env.LLM_MODEL || DEFAULT_MODEL,
-        messages: [{ role: "system", content: system }, ...withContext(messages, context)],
+        model: model || process.env.LLM_MODEL || DEFAULT_MODEL,
+        messages: [{ role: "system", content: system }, ...withContext(messages, context).map(toOllamaMessage)],
         stream: false,
         ...(tools && tools.length > 0 ? { tools: tools.map(toOllamaTool) } : {}),
       }),

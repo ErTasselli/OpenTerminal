@@ -1,6 +1,7 @@
 import { Router } from "express";
-import { activeProvider, LlmConfigError } from "../llm/index.js";
+import { activeProvider, LlmConfigError, MissingVisionModelError, resolveChatModel } from "../llm/index.js";
 import type { ChatMessage, ToolCall } from "../llm/types.js";
+import { redactImagesForAudit, textOf, validateChatMessages } from "../llm/types.js";
 import { NEWS_SEARCH_TOOL, runNewsSearchTool } from "../llm/tools.js";
 import { MEMORY_WRITE_TOOL, runWriteMemoryTool, MEMORY_SEARCH_TOOL, runSearchMemoryTool } from "../llm/memoryTools.js";
 import { PROPOSE_TRANSACTION_TOOL, runProposeTransactionTool } from "../llm/transactionTools.js";
@@ -56,6 +57,10 @@ aiRouter.post("/chat", async (req, res) => {
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "messages array required" });
   }
+  const imageError = validateChatMessages(messages);
+  if (imageError) {
+    return res.status(400).json({ error: imageError });
+  }
 
   let provider;
   try {
@@ -76,6 +81,24 @@ aiRouter.post("/chat", async (req, res) => {
     return res.status(503).json({ error: `AI assistant unavailable: ${detail}` });
   }
 
+  // An image-bearing turn under ollama-cloud routes to OLLAMA_VISION_MODEL instead of the
+  // regular LLM_MODEL (which may be text-only) -- see resolveChatModel. This check runs
+  // before the agentic loop (same 503-not-silent-failure contract as the two checks above)
+  // so a missing vision model never surfaces as a garbled reply from a text-only model.
+  let modelOverride: string | undefined;
+  try {
+    modelOverride = resolveChatModel(provider, messages);
+  } catch (err) {
+    if (!(err instanceof MissingVisionModelError)) throw err;
+    writeAuditLog({
+      eventType: "error",
+      summary: `chat unavailable: ${err.message}`,
+      detail: { error: err.message, stage: "chat" },
+      model: provider.name,
+    });
+    return res.status(503).json({ error: `AI assistant unavailable: ${err.message}` });
+  }
+
   try {
     let currentMessages: ChatMessage[] = messages;
     const toolTrace: ToolTraceEntry[] = [];
@@ -90,7 +113,7 @@ aiRouter.post("/chat", async (req, res) => {
       totalOutputTokens += usage.outputTokens;
     }
 
-    let response = await provider.chat({ system: SYSTEM, messages: currentMessages, context, tools: TOOLS });
+    let response = await provider.chat({ system: SYSTEM, messages: currentMessages, context, tools: TOOLS, model: modelOverride });
     accumulateUsage(response.usage);
 
     for (let round = 0; round < MAX_TOOL_ROUNDS && response.toolCalls && response.toolCalls.length > 0; round++) {
@@ -124,6 +147,7 @@ aiRouter.post("/chat", async (req, res) => {
       response = await provider.chat({
         system: SYSTEM,
         messages: currentMessages,
+        model: modelOverride,
         // `context` is only sent on the initial call — the model already has it from
         // round 1, and withContext() would otherwise re-prepend the same JSON blob on
         // every follow-up call, multiplying token usage by the number of tool rounds.
@@ -134,8 +158,10 @@ aiRouter.post("/chat", async (req, res) => {
 
     writeAuditLog({
       eventType: "chat",
-      summary: `${truncate(String(messages.at(-1)?.content ?? ""))} -> ${truncate(response.text)}`,
-      detail: { messages: currentMessages, response: response.text },
+      summary: `${truncate(textOf(messages.at(-1)?.content ?? ""))} -> ${truncate(response.text)}`,
+      // Image bytes never land in the Audit Log (#29 is request-only; see redactImagesForAudit) --
+      // only a redaction placeholder, keyed by mimeType, stands in for them here.
+      detail: { messages: redactImagesForAudit(currentMessages), response: response.text },
       model: provider.name,
       ...(sawUsage ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens } : {}),
     });
