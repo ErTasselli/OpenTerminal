@@ -39,6 +39,17 @@ CREATE TABLE IF NOT EXISTS transactions (
   executed_at TEXT NOT NULL,
   ${OPTION_COLUMNS.map((c) => c.ddl).join(",\n  ")}
 );
+-- A Memory Entry (see CONTEXT.md): a distilled, AI-authored note the assistant
+-- saves on its own via the write_memory tool, with no propose/confirm gate.
+-- Not portfolio-scoped (memory is global, not per-portfolio) and no updated_at/
+-- edit path -- the user can only delete a Memory Entry, never edit one in place.
+CREATE TABLE IF NOT EXISTS memory_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  content TEXT NOT NULL,
+  symbol TEXT,
+  category TEXT CHECK (category IS NULL OR category IN ('preference','watchlist','research-note')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 // Migration for pre-existing DBs created before the option-position columns above

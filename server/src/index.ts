@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { marketRouter } from "./routes/market.js";
 import { portfolioRouter } from "./routes/portfolio.js";
+import { memoryRouter } from "./routes/memory.js";
 import { aiRouter } from "./routes/ai.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
@@ -38,6 +39,7 @@ app.use(express.json());
 app.use("/api", rateLimit({ windowMs: 60_000, max: 240 }), marketRouter);
 // Portfolio data and the paid AI endpoint require a shared secret; see auth.ts.
 app.use("/api/portfolios", requireApiKey, portfolioRouter);
+app.use("/api/memory", requireApiKey, memoryRouter);
 app.use(
   "/api/ai",
   requireApiKey,
