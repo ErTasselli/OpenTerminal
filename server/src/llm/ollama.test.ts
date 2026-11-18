@@ -164,4 +164,22 @@ describe("ollamaProvider", () => {
     const result = await ollamaProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
     expect(result.toolCalls).toBeUndefined();
   });
+
+  it("maps top-level prompt_eval_count/eval_count into neutral usage", async () => {
+    mockFetchOnce(200, { message: { content: "ok" }, prompt_eval_count: 123, eval_count: 45 });
+
+    const result = await ollamaProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
+
+    expect(result.usage).toEqual({ inputTokens: 123, outputTokens: 45 });
+  });
+
+  it("omits usage when prompt_eval_count/eval_count are missing or non-numeric", async () => {
+    mockFetchOnce(200, { message: { content: "ok" } });
+    const result = await ollamaProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
+    expect(result.usage).toBeUndefined();
+
+    mockFetchOnce(200, { message: { content: "ok" }, prompt_eval_count: "oops", eval_count: 45 });
+    const result2 = await ollamaProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
+    expect(result2.usage).toBeUndefined();
+  });
 });

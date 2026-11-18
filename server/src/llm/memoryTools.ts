@@ -4,6 +4,7 @@
 // later chat turn. Mirrors tools.ts's search_news pattern (ToolDef + a matching
 // run*Tool executor) as the sibling tool file for this feature.
 import { db } from "../db.js";
+import { writeAuditLog, truncateSummary } from "../audit.js";
 import type { ToolDef } from "./types.js";
 
 export const MEMORY_CATEGORIES = ["preference", "watchlist", "research-note"] as const;
@@ -27,7 +28,13 @@ export function createMemoryEntry(content: string, symbol: string | null, catego
   const info = db
     .prepare("INSERT INTO memory_entries (content, symbol, category) VALUES (?, ?, ?)")
     .run(content, symbol, category);
-  return db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(info.lastInsertRowid) as MemoryEntry;
+  const entry = db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(info.lastInsertRowid) as MemoryEntry;
+  writeAuditLog({
+    eventType: "memory_write",
+    summary: truncateSummary(content),
+    detail: { content, symbol, category },
+  });
+  return entry;
 }
 
 export const MEMORY_WRITE_TOOL: ToolDef = {

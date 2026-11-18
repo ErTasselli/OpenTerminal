@@ -12,6 +12,7 @@ const ITEMS: Array<{ type: WidgetType; label: string; key: string }> = [
   { type: "options", label: "OPTIONS", key: "⌥7" },
   { type: "portfolio", label: "PORTFOLIO", key: "⌥8" },
   { type: "ai", label: "AI ASSIST", key: "⌥9" },
+  { type: "pending-actions", label: "PENDING", key: "" },
   { type: "watchlist", label: "WATCHLIST", key: "" },
   { type: "macro", label: "MACRO", key: "" },
   { type: "calendar", label: "CALENDAR", key: "" },
@@ -19,6 +20,7 @@ const ITEMS: Array<{ type: WidgetType; label: string; key: string }> = [
   { type: "tv", label: "LIVE TV", key: "" },
   { type: "recap", label: "MARKET RECAP", key: "" },
   { type: "memory", label: "MEMORY", key: "" },
+  { type: "audit-log", label: "AUDIT LOG", key: "" },
 ];
 
 export default function Sidebar() {

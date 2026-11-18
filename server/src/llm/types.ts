@@ -47,6 +47,8 @@ export interface LlmChatResponse {
   refused: boolean;
   /** Present (and non-empty) when the model asked to invoke one or more tools instead of answering directly. */
   toolCalls?: ToolCall[];
+  /** Call metadata for the Audit Log Entry (#23). Omitted when the provider's response didn't carry usable token counts. */
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 /**

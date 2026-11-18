@@ -78,7 +78,17 @@ export const ollamaProvider: LlmProvider = {
             arguments: parseToolCallArguments(c.function?.arguments),
           }))
         : undefined;
-    return { text: data?.message?.content ?? "", refused: false, toolCalls };
+    // Ollama's native /api/chat response carries token counts as top-level
+    // `prompt_eval_count` (input) / `eval_count` (output) fields, not nested
+    // under `message` -- see ollama.test.ts for the ground-truth response
+    // shape this is checked against. Guarded the same defensive way as
+    // parseToolCallArguments above: omit `usage` entirely rather than throw
+    // if either field is missing/non-numeric.
+    const usage =
+      typeof data?.prompt_eval_count === "number" && typeof data?.eval_count === "number"
+        ? { inputTokens: data.prompt_eval_count, outputTokens: data.eval_count }
+        : undefined;
+    return { text: data?.message?.content ?? "", refused: false, toolCalls, usage };
   },
 
   isAuthError(err: unknown): boolean {
