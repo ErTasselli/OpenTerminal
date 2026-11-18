@@ -185,4 +185,42 @@ describe("anthropicProvider", () => {
 
     expect(result.usage).toBeUndefined();
   });
+
+  it("translates an image-part message into Anthropic's base64 image content-block format", async () => {
+    const fetchMock = mockFetchOnce(200, { stop_reason: "end_turn", content: [{ type: "text", text: "ok" }] });
+
+    await anthropicProvider.chat({
+      system: "sys",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "what is this?" },
+            { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+          ],
+        },
+      ],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } },
+        ],
+      },
+    ]);
+  });
+
+  it("respects a per-call `model` override over LLM_MODEL", async () => {
+    process.env.LLM_MODEL = "should-be-ignored";
+    const fetchMock = mockFetchOnce(200, { stop_reason: "end_turn", content: [{ type: "text", text: "ok" }] });
+
+    await anthropicProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }], model: "vision-model" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.model).toBe("vision-model");
+  });
 });

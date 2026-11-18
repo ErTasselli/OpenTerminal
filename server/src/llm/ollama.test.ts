@@ -182,4 +182,34 @@ describe("ollamaProvider", () => {
     const result2 = await ollamaProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }] });
     expect(result2.usage).toBeUndefined();
   });
+
+  it("translates an image-part message into Ollama's native {content, images} shape", async () => {
+    const fetchMock = mockFetchOnce(200, { message: { content: "ok" } });
+
+    await ollamaProvider.chat({
+      system: "sys",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "what is this?" },
+            { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+          ],
+        },
+      ],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.messages[1]).toEqual({ role: "user", content: "what is this?", images: ["aGVsbG8="] });
+  });
+
+  it("respects a per-call `model` override over LLM_MODEL", async () => {
+    process.env.LLM_MODEL = "should-be-ignored";
+    const fetchMock = mockFetchOnce(200, { message: { content: "ok" } });
+
+    await ollamaProvider.chat({ system: "sys", messages: [{ role: "user", content: "hi" }], model: "vision-model" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.model).toBe("vision-model");
+  });
 });
