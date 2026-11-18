@@ -12,6 +12,10 @@ _Avoid_: "Provider" alone — collides with the unrelated market-data providers 
 The single LLM Provider currently selected via the `LLM_PROVIDER` env var. Exactly one is active at a time — there is no fallback between providers and no runtime/UI selection.
 _Avoid_: "Default provider" (ambiguous with the unset-env-var fallback to `anthropic`).
 
+**Vision Model**:
+The model an image-bearing chat turn is routed to under the `ollama-cloud` Active Provider, named by the separate `OLLAMA_VISION_MODEL` env var rather than the regular `LLM_MODEL`. Exactly one LLM Provider is ever active (see Active Provider); this is a second model used within that same active provider's own request, not a second provider or a runtime switch.
+_Avoid_: "Vision Provider" — it isn't a second Active Provider, and the `anthropic` provider has no equivalent knob, since its models already handle images within the one model used for text.
+
 **Tool Call**:
 A single model-invoked step within a chat turn's capped agentic loop (~4-5 per turn), where the AI assistant calls a registered tool (e.g. news search) and gets a result back before continuing. Works identically under either Active Provider via the shared `tools` field on `LlmChatRequest`. Positions and Watchlist are auto-injected as plain context each turn and are not Tool Calls.
 
