@@ -28,6 +28,14 @@ export type ApiChatMessage = { role: "user" | "assistant"; content: string | Cha
  * failure for the rest of the conversation. This matches the feature's own "images travel
  * in the request only" design: an image is live for the one turn it's attached to, and is
  * never resent after.
+ *
+ * As of #30, an image is also persisted server-side the first time a turn attaches it
+ * (server/src/imageStore.ts), so this client-side drop is no longer the only thing
+ * preventing an old image from ballooning a long conversation's request/Audit Log size --
+ * server/src/llm/imageHistoryCap.ts's capLiveImages enforces the same window=1 cap
+ * server-side, authoritatively, regardless of what any client sends. Kept here too
+ * anyway: it's strictly cheaper to never send bytes the server would just discard, and
+ * it keeps this function's own request-shaping concern self-contained on this side.
  */
 export function toApiMessages(history: OutgoingMessage[]): ApiChatMessage[] {
   const lastIndex = history.length - 1;

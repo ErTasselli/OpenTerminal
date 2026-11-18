@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { activeProvider, LlmConfigError, MissingVisionModelError, resolveChatModel } from "../llm/index.js";
 import type { ChatMessage, ToolCall } from "../llm/types.js";
-import { redactImagesForAudit, textOf, validateChatMessages } from "../llm/types.js";
+import { textOf, validateChatMessages } from "../llm/types.js";
+import { toAuditMessages } from "../llm/auditImages.js";
+import { capLiveImages } from "../llm/imageHistoryCap.js";
 import { NEWS_SEARCH_TOOL, runNewsSearchTool } from "../llm/tools.js";
 import { MEMORY_WRITE_TOOL, runWriteMemoryTool, MEMORY_SEARCH_TOOL, runSearchMemoryTool } from "../llm/memoryTools.js";
 import { PROPOSE_TRANSACTION_TOOL, runProposeTransactionTool } from "../llm/transactionTools.js";
@@ -100,7 +102,15 @@ aiRouter.post("/chat", async (req, res) => {
   }
 
   try {
-    let currentMessages: ChatMessage[] = messages;
+    // Persists every image part in the incoming history to disk under DATA_DIR/images
+    // (idempotent/content-addressed -- see imageStore.ts) and converts it to an
+    // `image-ref`, then rehydrates an image back to raw bytes for the provider call
+    // below only if its message falls within the trailing MAX_LIVE_IMAGE_TURNS-message
+    // window; any older turn's image becomes a text placeholder naming its stored id
+    // instead (#30). This is also what makes currentMessages safe to write to the
+    // Audit Log unchanged in shape at the bottom of this handler -- see the
+    // toAuditMessages call there.
+    let currentMessages: ChatMessage[] = capLiveImages(toAuditMessages(messages));
     const toolTrace: ToolTraceEntry[] = [];
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -159,9 +169,11 @@ aiRouter.post("/chat", async (req, res) => {
     writeAuditLog({
       eventType: "chat",
       summary: `${truncate(textOf(messages.at(-1)?.content ?? ""))} -> ${truncate(response.text)}`,
-      // Image bytes never land in the Audit Log (#29 is request-only; see redactImagesForAudit) --
-      // only a redaction placeholder, keyed by mimeType, stands in for them here.
-      detail: { messages: redactImagesForAudit(currentMessages), response: response.text },
+      // Raw image bytes never land in the Audit Log (#29's contract, upheld a different
+      // way as of #30): toAuditMessages persists any live rehydrated `image` part here
+      // right back to the same id it came from (content-addressed, so this is a no-op)
+      // and swaps it for an `image-ref` before this detail blob is serialized.
+      detail: { messages: toAuditMessages(currentMessages), response: response.text },
       model: provider.name,
       ...(sawUsage ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens } : {}),
     });

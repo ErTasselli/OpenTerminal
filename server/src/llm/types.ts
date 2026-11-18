@@ -1,12 +1,18 @@
 /**
  * One piece of a ChatMessage's content. `text` is ordinary prose; `image` is an
- * inline screenshot pasted/dropped into the AI Assistant's chat input (#29).
+ * inline screenshot pasted/dropped into the AI Assistant's chat input (#29), carried
+ * as raw base64 bytes; `image-ref` (#30) is a *persisted* image, referenced by the id
+ * `imageStore.ts`'s saveImage returned when it was written to disk under DATA_DIR.
  *
- * Request-only for now: `data` never gets written to disk or the Audit Log (see
- * redactImagesForAudit below) and there is no persisted-image-reference variant
- * yet -- that's #30, built on top of this shape, which is why this stays a
- * closed union keyed on `type` rather than, say, a bare string blob: adding a
- * third variant (e.g. `{ type: "image-ref"; id: string }`) later is additive.
+ * `image`'s `data` is request-only -- an incoming chat request is the only place this
+ * variant is ever accepted (see validatePart below) or produced, and it never survives
+ * past this one request: llm/imageHistoryCap.ts resolves every `image` part into either
+ * a rehydrated `image` (recent turns, read back from disk) or an `image-ref`-derived
+ * text placeholder (older turns) before a provider ever sees the message list, and
+ * llm/auditImages.ts's toAuditMessages persists+converts every `image` part to
+ * `image-ref` before anything is written to the Audit Log. Raw image bytes (`data`)
+ * must never land in the Audit Log or on disk keyed by anything other than their own
+ * content hash -- see imageStore.ts.
  */
 export type ChatMessagePart =
   | { type: "text"; text: string }
@@ -16,6 +22,12 @@ export type ChatMessagePart =
       mimeType: string;
       /** Base64-encoded image bytes, no `data:` URI prefix. */
       data: string;
+    }
+  | {
+      type: "image-ref";
+      /** imageStore.ts's content-addressed id (`<sha256-hex>.<ext>`) -- never a raw path. */
+      id: string;
+      mimeType: string;
     };
 
 /**
@@ -29,40 +41,19 @@ export interface ChatMessage {
   content: string | ChatMessagePart[];
 }
 
-/** True when this message's content carries at least one image part. */
+/** True when this message's content carries at least one image part (raw or persisted-ref). */
 export function messageHasImage(message: ChatMessage): boolean {
-  return Array.isArray(message.content) && message.content.some((p) => p.type === "image");
+  return Array.isArray(message.content) && message.content.some((p) => p.type === "image" || p.type === "image-ref");
 }
 
 /**
  * Plain-text rendering of a message's content, for places that only care about the
- * words (the chat-turn Audit Log summary line, etc). An image part renders as a
- * short placeholder -- never its data.
+ * words (the chat-turn Audit Log summary line, etc). An image part (raw or ref) renders
+ * as a short placeholder -- never its data.
  */
 export function textOf(content: ChatMessage["content"]): string {
   if (typeof content === "string") return content;
   return content.map((p) => (p.type === "text" ? p.text : "[image]")).join("\n");
-}
-
-/**
- * Audit-Log-safe copy of a message list: image parts keep their mimeType but have
- * their base64 `data` replaced with a redaction note. Images are request-only in
- * this ticket (#29) and must never land in the Audit Log's `detail` blob -- #30
- * (persisted image references) is a distinct, separately-scoped content-part
- * variant, not a reason to relax this.
- */
-export function redactImagesForAudit(messages: ChatMessage[]): ChatMessage[] {
-  return messages.map((m) => {
-    if (!Array.isArray(m.content)) return m;
-    return {
-      ...m,
-      content: m.content.map((p) =>
-        p.type === "image"
-          ? { type: "image" as const, mimeType: p.mimeType, data: "[redacted: image bytes are not persisted, see #30]" }
-          : p
-      ),
-    };
-  });
 }
 
 /** Image mime types accepted from the chat input -- the same set Anthropic's `media_type` accepts. */

@@ -6,6 +6,7 @@ import { memoryRouter } from "./routes/memory.js";
 import { pendingActionsRouter } from "./routes/pendingActions.js";
 import { auditLogRouter } from "./routes/auditLog.js";
 import { aiRouter } from "./routes/ai.js";
+import { imagesRouter } from "./routes/images.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
@@ -73,6 +74,11 @@ app.use("/api/portfolios", requireApiKey, portfolioRouter);
 app.use("/api/portfolios", requireApiKey, pendingActionsRouter);
 app.use("/api/memory", requireApiKey, memoryRouter);
 app.use("/api/audit-log", requireApiKey, auditLogRouter);
+// A chat-attached image persisted to disk under DATA_DIR/images (#30), served back by
+// its content-addressed id. No dedicated rate limit (unlike /api/ai's stricter one) --
+// a single conversation turn touches at most MAX_LIVE_IMAGE_TURNS (imageHistoryCap.ts)
+// live images, so normal use never approaches the cost /api/ai's limit guards against.
+app.use("/api/images", requireApiKey, imagesRouter);
 
 app.get("/api/status", (_req, res) => {
   res.json({

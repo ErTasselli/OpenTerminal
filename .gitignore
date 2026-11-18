@@ -12,3 +12,6 @@ docker-compose.override.yml
 # Database
 data/*.db*
 data/.api-key
+
+# Persisted chat images (#30) -- user-uploaded content, never checked in
+data/images/

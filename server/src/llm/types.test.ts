@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_IMAGE_BYTES,
   messageHasImage,
-  redactImagesForAudit,
   textOf,
   validateChatMessages,
   type ChatMessage,
@@ -28,6 +27,14 @@ describe("messageHasImage", () => {
     const message: ChatMessage = { role: "user", content: [{ type: "text", text: "hi" }] };
     expect(messageHasImage(message)).toBe(false);
   });
+
+  it("is true for a persisted image-ref part, same as a raw image part (#30)", () => {
+    const message: ChatMessage = {
+      role: "user",
+      content: [{ type: "image-ref", id: `${"a".repeat(64)}.png`, mimeType: "image/png" }],
+    };
+    expect(messageHasImage(message)).toBe(true);
+  });
 });
 
 describe("textOf", () => {
@@ -42,35 +49,6 @@ describe("textOf", () => {
     ]);
     expect(text).toBe("look at this\n[image]");
     expect(text).not.toContain("aGVsbG8=");
-  });
-});
-
-describe("redactImagesForAudit", () => {
-  it("leaves plain string messages untouched", () => {
-    const messages: ChatMessage[] = [{ role: "user", content: "hi" }];
-    expect(redactImagesForAudit(messages)).toEqual(messages);
-  });
-
-  it("strips image bytes from array content while keeping the mimeType and any text parts", () => {
-    const messages: ChatMessage[] = [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "what is this?" },
-          { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
-        ],
-      },
-    ];
-
-    const redacted = redactImagesForAudit(messages);
-
-    expect(redacted[0].content).toEqual([
-      { type: "text", text: "what is this?" },
-      { type: "image", mimeType: "image/png", data: expect.any(String) },
-    ]);
-    const imagePart = (redacted[0].content as any[])[1];
-    expect(imagePart.data).not.toBe("aGVsbG8=");
-    expect(JSON.stringify(redacted)).not.toContain("aGVsbG8=");
   });
 });
 
