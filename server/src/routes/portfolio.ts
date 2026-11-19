@@ -41,9 +41,16 @@ portfolioRouter.post("/:id/transactions", (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
   const t = parsed.data;
   try {
+    // Includes spread_id (validated, but nullable/optional, by txSchema) so a
+    // manually-entered closing transaction -- e.g. buying back part of a
+    // Credit Spread's short Leg -- can be linked to the spread it's closing
+    // out, for GET /:id/positions (issue #52) to fold it into that spread's
+    // aggregated entry instead of surfacing it as an unrelated OPTION
+    // position. Before #52 this column was silently dropped on insert even
+    // though txSchema already validated it.
     const info = db
       .prepare(
-        "INSERT INTO transactions (portfolio_id, symbol, side, quantity, price, executed_at, instrument_type, option_type, strike, expiration) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO transactions (portfolio_id, symbol, side, quantity, price, executed_at, instrument_type, option_type, strike, expiration, spread_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
       .run(
         req.params.id,
@@ -55,7 +62,8 @@ portfolioRouter.post("/:id/transactions", (req, res) => {
         t.instrument_type,
         t.option_type,
         t.strike,
-        t.expiration
+        t.expiration,
+        t.spread_id
       );
     res.status(201).json({ id: info.lastInsertRowid, ...t });
   } catch {
@@ -169,13 +177,98 @@ type TxRow = {
   option_type: string | null;
   strike: number | null;
   expiration: string | null;
+  spread_id: string | null;
 };
 
-/** Aggregated positions with average cost and realized PnL (FIFO-free, average-cost method). */
+type LegFold = { qty: number; avgPrice: number; realizedPnl: number };
+
+/**
+ * Advances one Leg's own running qty/avgPrice/realizedPnl by one of that
+ * Leg's chronological Transactions. `opens` is the side that *opens or adds
+ * to* this Leg -- "BUY" for an ordinary long holding (equities, and the long
+ * Leg of a Credit Spread) or "SELL" for a Credit Spread's short Leg, which is
+ * sold to open with no prior BUY. This generalizes the average-cost fold
+ * `GET /:id/positions` already used for every non-spread position (inlined
+ * below in the main loop) to the short-Leg case: that original fold assumes
+ * a position only ever opens via BUY, so a bare SELL against a flat position
+ * is a silent no-op there (`sold = min(quantity, 0) = 0`) -- correct for a
+ * long-only holding, wrong for a Leg sold to open. The two sides' realized
+ * P&L math is mirrored: a long Leg profits on (exit price − entry avg cost);
+ * a short Leg profits on (entry avg credit − exit/buyback price).
+ */
+function stepLeg(leg: LegFold, tx: TxRow, opens: "BUY" | "SELL"): LegFold {
+  const multiplier = multiplierFor(tx.instrument_type);
+  if (tx.side === opens) {
+    const totalCost = leg.avgPrice * leg.qty + tx.price * tx.quantity;
+    const qty = leg.qty + tx.quantity;
+    return { qty, avgPrice: qty > 0 ? totalCost / qty : 0, realizedPnl: leg.realizedPnl };
+  }
+  const closed = Math.min(tx.quantity, leg.qty);
+  const pnlDelta =
+    opens === "BUY"
+      ? (tx.price - leg.avgPrice) * closed * multiplier
+      : (leg.avgPrice - tx.price) * closed * multiplier;
+  const qty = leg.qty - closed;
+  return { qty, avgPrice: qty === 0 ? 0 : leg.avgPrice, realizedPnl: leg.realizedPnl + pnlDelta };
+}
+
+/**
+ * Determines, for one spread_id's group of Transactions, which strike is the
+ * short Leg and which is the long Leg -- or returns null if the group
+ * doesn't have the 2-distinct-strikes/opposite-opening-sides shape ADR-0004
+ * guarantees for a spread written via POST /:id/credit-spreads. A group can
+ * fail this shape in practice if, e.g., DELETE /:id/transactions/:txId
+ * removed one Leg's only row, leaving an orphaned single-strike group, or a
+ * Leg's spread_id was hand-edited directly in the DB. Rather than drop those
+ * Transactions from the response, the caller below falls back to folding
+ * them through the ordinary non-spread composite-key path -- degrading
+ * gracefully to single-leg OPTION positions instead of losing data.
+ */
+function classifySpreadGroup(group: TxRow[]): { shortStrike: number; longStrike: number } | null {
+  const byStrike = new Map<number, TxRow[]>();
+  for (const tx of group) {
+    const strike = tx.strike as number;
+    const legTxs = byStrike.get(strike) ?? [];
+    legTxs.push(tx);
+    byStrike.set(strike, legTxs);
+  }
+  if (byStrike.size !== 2) return null;
+  // group is already in chronological (executed_at, id) order (inherited
+  // from the query below), so legTxs[0] is each Leg's opening Transaction.
+  const legs = [...byStrike.entries()].map(([strike, legTxs]) => ({ strike, opens: legTxs[0].side }));
+  const shortLeg = legs.find((l) => l.opens === "SELL");
+  const longLeg = legs.find((l) => l.opens === "BUY");
+  if (!shortLeg || !longLeg) return null;
+  return { shortStrike: shortLeg.strike, longStrike: longLeg.strike };
+}
+
+/**
+ * Aggregated positions with average cost and realized PnL (FIFO-free,
+ * average-cost method). Transactions sharing a `spread_id` (ADR-0004, issue
+ * #52) are folded Leg-by-Leg and combined into one `CREDIT_SPREAD` entry
+ * instead of surfacing as two unrelated OPTION positions; a null `spread_id`
+ * continues to use the original composite-key fold below, unchanged.
+ */
 portfolioRouter.get("/:id/positions", (req, res) => {
   const txs = db
     .prepare("SELECT * FROM transactions WHERE portfolio_id = ? ORDER BY executed_at, id")
     .all(req.params.id) as TxRow[];
+
+  // First pass: group by spread_id and classify each group's shape, so the
+  // main loop below can decide per-transaction, in one pass, whether to fold
+  // it as a spread Leg or through the ordinary composite-key path.
+  const spreadGroups = new Map<string, TxRow[]>();
+  for (const tx of txs) {
+    if (tx.spread_id == null) continue;
+    const group = spreadGroups.get(tx.spread_id) ?? [];
+    group.push(tx);
+    spreadGroups.set(tx.spread_id, group);
+  }
+  const validSpreads = new Map<string, { shortStrike: number; longStrike: number }>();
+  for (const [spreadId, group] of spreadGroups) {
+    const classified = classifySpreadGroup(group);
+    if (classified) validSpreads.set(spreadId, classified);
+  }
 
   const positions = new Map<
     string,
@@ -190,7 +283,43 @@ portfolioRouter.get("/:id/positions", (req, res) => {
       realizedPnl: number;
     }
   >();
+  const spreadStates = new Map<
+    string,
+    {
+      symbol: string;
+      optionType: string | null;
+      expiration: string | null;
+      shortStrike: number;
+      longStrike: number;
+      shortLeg: LegFold;
+      longLeg: LegFold;
+    }
+  >();
+
   for (const tx of txs) {
+    const spreadInfo = tx.spread_id != null ? validSpreads.get(tx.spread_id) : undefined;
+    if (spreadInfo) {
+      let s = spreadStates.get(tx.spread_id as string);
+      if (!s) {
+        s = {
+          symbol: tx.symbol,
+          optionType: tx.option_type,
+          expiration: tx.expiration,
+          shortStrike: spreadInfo.shortStrike,
+          longStrike: spreadInfo.longStrike,
+          shortLeg: { qty: 0, avgPrice: 0, realizedPnl: 0 },
+          longLeg: { qty: 0, avgPrice: 0, realizedPnl: 0 },
+        };
+        spreadStates.set(tx.spread_id as string, s);
+      }
+      if (tx.strike === spreadInfo.shortStrike) {
+        s.shortLeg = stepLeg(s.shortLeg, tx, "SELL");
+      } else {
+        s.longLeg = stepLeg(s.longLeg, tx, "BUY");
+      }
+      continue;
+    }
+
     // JSON-encode the composite key (rather than joining with a plain
     // separator) so a symbol can't be crafted to collide with another
     // position's key — e.g. a plain `${symbol}|${strike}` join would let an
@@ -214,31 +343,86 @@ portfolioRouter.get("/:id/positions", (req, res) => {
       };
       positions.set(key, p);
     }
-    const multiplier = multiplierFor(tx.instrument_type);
-    if (tx.side === "BUY") {
-      const totalCost = p.avgCost * p.qty + tx.price * tx.quantity;
-      p.qty += tx.quantity;
-      p.avgCost = p.qty > 0 ? totalCost / p.qty : 0;
-    } else {
-      const sold = Math.min(tx.quantity, p.qty);
-      p.realizedPnl += (tx.price - p.avgCost) * sold * multiplier;
-      p.qty -= sold;
-      if (p.qty === 0) p.avgCost = 0;
-    }
+    // Reuses stepLeg (opens="BUY": every non-spread position, like a spread's
+    // long Leg, only ever opens via BUY) instead of re-inlining the same
+    // average-cost math a second time.
+    const stepped = stepLeg({ qty: p.qty, avgPrice: p.avgCost, realizedPnl: p.realizedPnl }, tx, "BUY");
+    p.qty = stepped.qty;
+    p.avgCost = stepped.avgPrice;
+    p.realizedPnl = stepped.realizedPnl;
   }
-  res.json(
-    [...positions.values()]
-      .filter((p) => p.qty > 0 || p.realizedPnl !== 0)
-      .map((p) => ({
-        symbol: p.symbol,
-        instrumentType: p.instrumentType,
-        optionType: p.optionType,
-        strike: p.strike,
-        expiration: p.expiration,
-        quantity: p.qty,
-        avgCost: p.avgCost,
-        realizedPnl: p.realizedPnl,
-        multiplier: multiplierFor(p.instrumentType),
-      }))
-  );
+
+  const singleLegPositions = [...positions.values()]
+    .filter((p) => p.qty > 0 || p.realizedPnl !== 0)
+    .map((p) => ({
+      symbol: p.symbol,
+      instrumentType: p.instrumentType,
+      optionType: p.optionType,
+      strike: p.strike,
+      expiration: p.expiration,
+      quantity: p.qty,
+      avgCost: p.avgCost,
+      realizedPnl: p.realizedPnl,
+      multiplier: multiplierFor(p.instrumentType),
+    }));
+
+  const spreadPositions = [...spreadStates.values()]
+    .map((s) => {
+      // The remaining *paired* (hedged) quantity is the smaller of the two
+      // Legs' own remaining open quantity. If a manually-entered closing
+      // Transaction (see the spread_id fix on POST /:id/transactions above)
+      // closed part of only one Leg, the Legs' remaining quantities diverge
+      // and the excess on the other Leg is no longer hedged by this spread.
+      // `quantity` below is this entry's primary, hedged-size figure (what
+      // the acceptance criteria calls "quantity (contracts)"), but
+      // shortQuantity/longQuantity are also exposed below so that divergence
+      // is never silently hidden -- a caller can always recover each Leg's
+      // own remaining size, even though this ticket doesn't attempt to
+      // surface the unhedged excess as its own position (that would need a
+      // "side" concept the plain OPTION/EQUITY position shape doesn't have
+      // today, e.g. to tell a naked short Leg's credit-received basis apart
+      // from a long Leg's cost basis -- left for a future ticket).
+      const quantity = Math.min(s.shortLeg.qty, s.longLeg.qty);
+      // Combined across BOTH Legs' full history, independent of `quantity`
+      // above -- a closing Transaction's realized gain/loss doesn't depend
+      // on how much of the other Leg is still open.
+      const realizedPnl = s.shortLeg.realizedPnl + s.longLeg.realizedPnl;
+      const multiplier = OPTION_CONTRACT_MULTIPLIER; // Credit Spreads are OPTION-only (ADR-0004).
+      const strikeWidth = Math.abs(s.shortStrike - s.longStrike);
+      // net_credit and max_risk are scaled to `quantity` -- the contracts
+      // still open on BOTH Legs right now -- not to the spread's original
+      // entry quantity. Once a partial close has realized P&L on part of a
+      // Leg, that slice's risk is already resolved (and already counted in
+      // realizedPnl above); max risk should describe what's still at stake
+      // on the remaining paired contracts going forward, not the historical
+      // trade size. Each Leg's avgPrice is already an average over that
+      // Leg's own remaining open quantity (same average-cost convention as
+      // the rest of this file), so scaling both by the shared `quantity`
+      // keeps net credit and max risk on the same per-contract basis as the
+      // position itself.
+      const netCredit = (s.shortLeg.avgPrice - s.longLeg.avgPrice) * multiplier * quantity;
+      const maxRisk = strikeWidth * multiplier * quantity - netCredit;
+      return {
+        symbol: s.symbol,
+        instrumentType: "CREDIT_SPREAD" as const,
+        optionType: s.optionType,
+        expiration: s.expiration,
+        shortStrike: s.shortStrike,
+        longStrike: s.longStrike,
+        quantity,
+        shortQuantity: s.shortLeg.qty,
+        longQuantity: s.longLeg.qty,
+        netCredit,
+        maxRisk,
+        realizedPnl,
+        multiplier,
+      };
+    })
+    // Same drop convention as the single-leg positions above: a spread with
+    // no remaining paired quantity and no net realized P&L contributes
+    // nothing and is omitted; a fully-closed spread with nonzero realized
+    // P&L still appears (quantity 0) so that gain/loss isn't hidden.
+    .filter((p) => p.quantity > 0 || p.realizedPnl !== 0);
+
+  res.json([...singleLegPositions, ...spreadPositions]);
 });

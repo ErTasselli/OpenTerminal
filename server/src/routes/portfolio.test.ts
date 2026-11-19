@@ -479,12 +479,15 @@ describe("POST /:id/credit-spreads", () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
-  it("does not change GET /:id/positions aggregation: a spread's two legs fold exactly like the same two transactions posted independently", async () => {
-    // Guards the ticket's scope boundary: issue #52 (folding linked Legs into
-    // one Position) is explicitly out of scope here, so posting via
-    // /credit-spreads must resolve to the same positions as posting the same
-    // SELL leg and BUY leg independently via /transactions (spread_id is not
-    // yet consulted by the position-folding logic in GET /:id/positions).
+  it("folds a spread's two legs into one CREDIT_SPREAD entry, unlike the same two transactions posted independently (issue #52)", async () => {
+    // Was originally written for #51 to guard the scope boundary the other
+    // way: before #52, GET /:id/positions didn't consult spread_id at all,
+    // so posting via /credit-spreads resolved to the same two independent
+    // OPTION positions as posting the same SELL leg and BUY leg
+    // independently via /transactions. #52's job (per the issue) is exactly
+    // to change that: now the two paths diverge -- the unlinked legs still
+    // fold to two independent OPTION positions (non-regression), while the
+    // spread_id-linked legs fold to one CREDIT_SPREAD entry.
     const postHandler = getHandler("/:id/transactions", "post");
     const spreadHandler = getHandler("/:id/credit-spreads", "post");
     const getHandlerFn = getHandler("/:id/positions", "get");
@@ -538,12 +541,136 @@ describe("POST /:id/credit-spreads", () => {
     await getHandlerFn({ params: { id: String(portfolioId) } } as unknown as Request, res, () => {});
     const positions = (res.json as any).mock.calls[0][0] as Array<Record<string, unknown>>;
 
-    const strip = (p: Record<string, unknown>) => {
-      const { symbol, ...rest } = p;
-      return rest;
+    const controlPositions = positions.filter((p) => p.symbol === "CONTROLCHK");
+    const spreadPositions = positions.filter((p) => p.symbol === "SPREADCHK");
+
+    // Non-regression: the unlinked (no spread_id) composite-key fold is
+    // byte-identical to before #52. It folds exactly as it did pre-#52: a
+    // SELL with no prior BUY on that strike is a no-op (qty/realizedPnl both
+    // stay 0, see the composite-key loop above), so only the BUY leg
+    // (strike 460) survives the qty>0||realizedPnl!==0 filter -- this is
+    // itself the pre-existing single-leg behavior this ticket must not
+    // change, not something introduced by spread-aware aggregation.
+    expect(controlPositions).toHaveLength(1);
+    expect(controlPositions.every((p) => p.instrumentType === "OPTION")).toBe(true);
+
+    // The spread_id-linked legs now fold to one CREDIT_SPREAD entry instead.
+    expect(spreadPositions).toHaveLength(1);
+    expect(spreadPositions[0]).toMatchObject({
+      instrumentType: "CREDIT_SPREAD",
+      shortStrike: 450,
+      longStrike: 460,
+      quantity: 1,
+    });
+  });
+});
+
+describe("GET /:id/positions aggregates credit spreads (issue #52)", () => {
+  function validSpreadBody(overrides: Record<string, unknown> = {}) {
+    return {
+      symbol: "aggspy",
+      option_type: "CALL",
+      expiration: "2026-12-18",
+      quantity: 2,
+      executed_at: "2026-07-01T00:00:00Z",
+      short_strike: 450,
+      short_price: 5,
+      long_strike: 460,
+      long_price: 2,
+      ...overrides,
     };
-    const controlPositions = positions.filter((p) => p.symbol === "CONTROLCHK").map(strip);
-    const spreadPositions = positions.filter((p) => p.symbol === "SPREADCHK").map(strip);
-    expect(spreadPositions).toEqual(controlPositions);
+  }
+
+  it("folds a fully open credit spread's two legs into one aggregated entry with net credit, max risk, and realized P&L", async () => {
+    const spreadHandler = getHandler("/:id/credit-spreads", "post");
+    const getHandlerFn = getHandler("/:id/positions", "get");
+
+    await spreadHandler(
+      { params: { id: String(portfolioId) }, body: validSpreadBody() } as unknown as Request,
+      fakeRes(),
+      () => {}
+    );
+
+    const res = fakeRes();
+    await getHandlerFn({ params: { id: String(portfolioId) } } as unknown as Request, res, () => {});
+    const positions = (res.json as any).mock.calls[0][0] as Array<Record<string, unknown>>;
+
+    const spreadPositions = positions.filter((p) => p.symbol === "AGGSPY");
+    // One aggregated entry, not two independent single-leg OPTION positions.
+    expect(spreadPositions).toHaveLength(1);
+    const entry = spreadPositions[0];
+    expect(entry.instrumentType).toBe("CREDIT_SPREAD");
+    expect(entry.optionType).toBe("CALL");
+    expect(entry.expiration).toBe("2026-12-18");
+    expect(entry.shortStrike).toBe(450);
+    expect(entry.longStrike).toBe(460);
+    expect(entry.quantity).toBe(2);
+    // net credit = (short_price - long_price) * 100 * quantity = (5-2)*100*2 = 600
+    expect(entry.netCredit).toBeCloseTo(600, 5);
+    // max risk = strike_width * 100 * quantity - net_credit = 10*100*2 - 600 = 1400
+    expect(entry.maxRisk).toBeCloseTo(1400, 5);
+    expect(entry.realizedPnl).toBeCloseTo(0, 5);
+    expect(entry.multiplier).toBe(100);
+  });
+
+  it("combines realized P&L from a partially closed leg while the other leg stays fully open", async () => {
+    const spreadHandler = getHandler("/:id/credit-spreads", "post");
+    const postHandler = getHandler("/:id/transactions", "post");
+    const getHandlerFn = getHandler("/:id/positions", "get");
+
+    const spreadRes = fakeRes();
+    await spreadHandler(
+      {
+        params: { id: String(portfolioId) },
+        body: validSpreadBody({ symbol: "partspy", quantity: 2 }),
+      } as unknown as Request,
+      spreadRes,
+      () => {}
+    );
+    const spreadBody = (spreadRes.json as any).mock.calls[0][0];
+
+    // Buy back 1 of the 2 short contracts (the short leg's strike is 450) at
+    // a price below the $5 credit received -- realizes a gain on that leg --
+    // while the long leg (strike 460) stays fully open at 2 contracts.
+    await postHandler(
+      {
+        params: { id: String(portfolioId) },
+        body: {
+          symbol: "partspy",
+          side: "BUY",
+          quantity: 1,
+          price: 1,
+          executed_at: "2026-07-02T00:00:00Z",
+          instrument_type: "OPTION",
+          option_type: "CALL",
+          strike: 450,
+          expiration: "2026-12-18",
+          spread_id: spreadBody.spread_id,
+        },
+      } as unknown as Request,
+      fakeRes(),
+      () => {}
+    );
+
+    const res = fakeRes();
+    await getHandlerFn({ params: { id: String(portfolioId) } } as unknown as Request, res, () => {});
+    const positions = (res.json as any).mock.calls[0][0] as Array<Record<string, unknown>>;
+
+    const spreadPositions = positions.filter((p) => p.symbol === "PARTSPY");
+    expect(spreadPositions).toHaveLength(1);
+    const entry = spreadPositions[0];
+    expect(entry.instrumentType).toBe("CREDIT_SPREAD");
+    // Remaining paired quantity is the smaller of the two legs' open qty: 1.
+    expect(entry.quantity).toBe(1);
+    // Each leg's own remaining quantity is still exposed, so the divergence
+    // (short down to 1, long still at 2) isn't hidden by the paired figure.
+    expect(entry.shortQuantity).toBe(1);
+    expect(entry.longQuantity).toBe(2);
+    // Realized P&L on the closed short contract: (5 - 1) * 100 * 1 = 400.
+    expect(entry.realizedPnl).toBeCloseTo(400, 5);
+    // Net credit/max risk are scaled to the still-open 1 paired contract,
+    // using each leg's unchanged average price: (5-2)*100*1 = 300.
+    expect(entry.netCredit).toBeCloseTo(300, 5);
+    expect(entry.maxRisk).toBeCloseTo(700, 5);
   });
 });
