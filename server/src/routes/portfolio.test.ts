@@ -379,3 +379,171 @@ describe("GET /:id/positions", () => {
     expect(eqPosition?.avgCost).toBe(10);
   });
 });
+
+describe("POST /:id/credit-spreads", () => {
+  function validSpreadBody() {
+    return {
+      symbol: "spy",
+      option_type: "CALL",
+      expiration: "2026-12-18",
+      quantity: 1,
+      executed_at: "2026-06-01T00:00:00Z",
+      short_strike: 450,
+      short_price: 5,
+      long_strike: 460,
+      long_price: 2,
+    };
+  }
+
+  it("writes two linked transaction rows (SELL short leg, BUY long leg) sharing one spread_id", async () => {
+    const handler = getHandler("/:id/credit-spreads", "post");
+    const req = { params: { id: String(portfolioId) }, body: validSpreadBody() } as unknown as Request;
+    const res = fakeRes();
+
+    await handler(req, res, () => {});
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const body = (res.json as any).mock.calls[0][0];
+    expect(typeof body.spread_id).toBe("string");
+    expect(body.spread_id.length).toBeGreaterThan(0);
+    expect(body.legs).toHaveLength(2);
+
+    const shortLeg = body.legs.find((l: any) => l.side === "SELL");
+    const longLeg = body.legs.find((l: any) => l.side === "BUY");
+    expect(shortLeg).toMatchObject({
+      symbol: "SPY",
+      side: "SELL",
+      instrument_type: "OPTION",
+      option_type: "CALL",
+      strike: 450,
+      price: 5,
+      expiration: "2026-12-18",
+      spread_id: body.spread_id,
+    });
+    expect(longLeg).toMatchObject({
+      symbol: "SPY",
+      side: "BUY",
+      instrument_type: "OPTION",
+      option_type: "CALL",
+      strike: 460,
+      price: 2,
+      expiration: "2026-12-18",
+      spread_id: body.spread_id,
+    });
+
+    // Persisted rows actually share the spread_id in the DB, not just the response.
+    const rows = db
+      .prepare("SELECT * FROM transactions WHERE spread_id = ? ORDER BY side")
+      .all(body.spread_id) as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+  });
+
+  it("rejects a request where the two strikes match with 400 and writes nothing", async () => {
+    const handler = getHandler("/:id/credit-spreads", "post");
+    const body = { ...validSpreadBody(), long_strike: 450 };
+    const req = { params: { id: String(portfolioId) }, body } as unknown as Request;
+    const res = fakeRes();
+
+    const before = db.prepare("SELECT COUNT(*) AS n FROM transactions").get() as { n: number };
+    await handler(req, res, () => {});
+    const after = db.prepare("SELECT COUNT(*) AS n FROM transactions").get() as { n: number };
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(after.n).toBe(before.n);
+  });
+
+  it("rejects a net-debit request (short price <= long price) with 400 and writes nothing", async () => {
+    const handler = getHandler("/:id/credit-spreads", "post");
+    const body = { ...validSpreadBody(), short_price: 2, long_price: 5 };
+    const req = { params: { id: String(portfolioId) }, body } as unknown as Request;
+    const res = fakeRes();
+
+    const before = db.prepare("SELECT COUNT(*) AS n FROM transactions").get() as { n: number };
+    await handler(req, res, () => {});
+    const after = db.prepare("SELECT COUNT(*) AS n FROM transactions").get() as { n: number };
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(after.n).toBe(before.n);
+  });
+
+  it("rejects a request missing required fields with 400", async () => {
+    const handler = getHandler("/:id/credit-spreads", "post");
+    const req = {
+      params: { id: String(portfolioId) },
+      body: { symbol: "spy", option_type: "CALL" },
+    } as unknown as Request;
+    const res = fakeRes();
+
+    await handler(req, res, () => {});
+
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("does not change GET /:id/positions aggregation: a spread's two legs fold exactly like the same two transactions posted independently", async () => {
+    // Guards the ticket's scope boundary: issue #52 (folding linked Legs into
+    // one Position) is explicitly out of scope here, so posting via
+    // /credit-spreads must resolve to the same positions as posting the same
+    // SELL leg and BUY leg independently via /transactions (spread_id is not
+    // yet consulted by the position-folding logic in GET /:id/positions).
+    const postHandler = getHandler("/:id/transactions", "post");
+    const spreadHandler = getHandler("/:id/credit-spreads", "post");
+    const getHandlerFn = getHandler("/:id/positions", "get");
+
+    await postHandler(
+      {
+        params: { id: String(portfolioId) },
+        body: {
+          symbol: "controlchk",
+          side: "SELL",
+          quantity: 1,
+          price: 5,
+          executed_at: "2026-06-01T00:00:00Z",
+          instrument_type: "OPTION",
+          option_type: "CALL",
+          strike: 450,
+          expiration: "2026-12-18",
+        },
+      } as unknown as Request,
+      fakeRes(),
+      () => {}
+    );
+    await postHandler(
+      {
+        params: { id: String(portfolioId) },
+        body: {
+          symbol: "controlchk",
+          side: "BUY",
+          quantity: 1,
+          price: 2,
+          executed_at: "2026-06-01T00:00:00Z",
+          instrument_type: "OPTION",
+          option_type: "CALL",
+          strike: 460,
+          expiration: "2026-12-18",
+        },
+      } as unknown as Request,
+      fakeRes(),
+      () => {}
+    );
+    await spreadHandler(
+      {
+        params: { id: String(portfolioId) },
+        body: { ...validSpreadBody(), symbol: "spreadchk" },
+      } as unknown as Request,
+      fakeRes(),
+      () => {}
+    );
+
+    const res = fakeRes();
+    await getHandlerFn({ params: { id: String(portfolioId) } } as unknown as Request, res, () => {});
+    const positions = (res.json as any).mock.calls[0][0] as Array<Record<string, unknown>>;
+
+    const strip = (p: Record<string, unknown>) => {
+      const { symbol, ...rest } = p;
+      return rest;
+    };
+    const controlPositions = positions.filter((p) => p.symbol === "CONTROLCHK").map(strip);
+    const spreadPositions = positions.filter((p) => p.symbol === "SPREADCHK").map(strip);
+    expect(spreadPositions).toEqual(controlPositions);
+  });
+});

@@ -33,6 +33,13 @@ const PENDING_ACTION_COLUMNS: Array<{ name: string; ddl: string }> = [
   { name: "pending_action_id", ddl: "pending_action_id INTEGER REFERENCES pending_actions(id)" },
 ];
 
+// ADR-0004: links the two Legs of a Credit Spread. Nullable and shared by both
+// Legs' Transaction rows; NULL for an ordinary single-leg Transaction, which
+// aggregates in GET /:id/positions exactly as it does today (that aggregation
+// change, and the invariant checks on two rows sharing a spread_id, land via
+// server/src/schemas/creditSpread.ts and the POST /:id/credit-spreads route).
+const SPREAD_COLUMNS: Array<{ name: string; ddl: string }> = [{ name: "spread_id", ddl: "spread_id TEXT" }];
+
 // Created before the transactions table/migration below because
 // pending_action_id (added to transactions by the migration loop further
 // down) references this table by FK.
@@ -65,7 +72,8 @@ CREATE TABLE IF NOT EXISTS transactions (
   price REAL NOT NULL CHECK (price >= 0),
   executed_at TEXT NOT NULL,
   ${OPTION_COLUMNS.map((c) => c.ddl).join(",\n  ")},
-  ${PENDING_ACTION_COLUMNS.map((c) => c.ddl).join(",\n  ")}
+  ${PENDING_ACTION_COLUMNS.map((c) => c.ddl).join(",\n  ")},
+  ${SPREAD_COLUMNS.map((c) => c.ddl).join(",\n  ")}
 );
 -- A Memory Entry (see CONTEXT.md): a distilled, AI-authored note the assistant
 -- saves on its own via the write_memory tool, with no propose/confirm gate.
@@ -112,7 +120,7 @@ END;
 const existingColumns = new Set(
   (db.prepare("PRAGMA table_info(transactions)").all() as Array<{ name: string }>).map((c) => c.name)
 );
-for (const col of [...OPTION_COLUMNS, ...PENDING_ACTION_COLUMNS]) {
+for (const col of [...OPTION_COLUMNS, ...PENDING_ACTION_COLUMNS, ...SPREAD_COLUMNS]) {
   if (!existingColumns.has(col.name)) {
     db.exec(`ALTER TABLE transactions ADD COLUMN ${col.ddl}`);
   }
