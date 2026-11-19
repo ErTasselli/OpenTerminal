@@ -3,8 +3,12 @@
 
 export type SeriesPoint = { date: string; value: number };
 
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 export async function series(seriesId: string, lastN = 260): Promise<SeriesPoint[]> {
-  const res = await fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`);
+  const res = await fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`fred ${res.status} for ${seriesId}`);
   const text = await res.text();
   const lines = text.trim().split("\n").slice(1); // drop header row

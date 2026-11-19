@@ -2,6 +2,8 @@
 // own screener widget and symbol search box. No API key. Requires a
 // believable Referer/Origin or the edge returns 403.
 
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const HEADERS = {
   "User-Agent": UA,
@@ -53,6 +55,7 @@ export async function scanFundamentals(
     method: "POST",
     headers: HEADERS,
     body: JSON.stringify({ symbols: { tickers }, columns: COLUMNS }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`tradingview scan ${res.status}`);
   const json = await res.json();
@@ -101,6 +104,7 @@ export async function marketScan(limit = 1500): Promise<MarketRow[]> {
       sort: { sortBy: "market_cap_basic", sortOrder: "desc" },
       range: [0, limit],
     }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`tradingview scan ${res.status}`);
   const json = await res.json();
@@ -164,6 +168,7 @@ async function scanOneEuropeMarket(
       sort: { sortBy: "market_cap_basic", sortOrder: "desc" },
       range: [0, perMarketLimit],
     }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`tradingview scan ${m.region} ${res.status}`);
   const json = await res.json();
@@ -221,6 +226,7 @@ export async function earningsCalendar(symbols: string[]): Promise<EarningsInfo[
     method: "POST",
     headers: HEADERS,
     body: JSON.stringify({ symbols: { tickers }, columns: EARNINGS_COLUMNS }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`tradingview scan ${res.status}`);
   const json = await res.json();
@@ -275,7 +281,7 @@ export async function search(query: string): Promise<SearchResult[]> {
   const url = `https://symbol-search.tradingview.com/symbol_search/v3/?text=${encodeURIComponent(
     query
   )}&hl=1&lang=en&search_type=undefined&domain=production&sort_by_country=US`;
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`tradingview search ${res.status}`);
   const json = await res.json();
   const rows: any[] = json?.symbols ?? [];

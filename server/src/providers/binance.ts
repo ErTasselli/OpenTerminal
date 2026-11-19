@@ -10,12 +10,14 @@ const NAMES: Record<string, string> = {
 /** Plain tickers (BTC, ETH, ...) this app treats as crypto for routing quotes/history. */
 export const CRYPTO_SYMBOLS = new Set(Object.keys(NAMES).map((s) => s.replace("USDT", "")));
 
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 /** Fallback crypto board built from Binance public 24hr tickers (no key required). */
 export async function markets(): Promise<CryptoRow[]> {
   const symbols = Object.keys(NAMES);
   const url =
     "https://api.binance.com/api/v3/ticker/24hr?symbols=" + encodeURIComponent(JSON.stringify(symbols));
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`binance ${res.status}`);
   const rows: any[] = await res.json();
   return rows
@@ -35,7 +37,9 @@ export async function markets(): Promise<CryptoRow[]> {
 
 export async function orderBook(symbol: string, limit = 20): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
   const pair = encodeURIComponent(symbol.toUpperCase() + "USDT");
-  const res = await fetch(`https://api.binance.com/api/v3/depth?symbol=${pair}&limit=${limit}`);
+  const res = await fetch(`https://api.binance.com/api/v3/depth?symbol=${pair}&limit=${limit}`, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`binance ${res.status}`);
   const d = await res.json();
   return { bids: d.bids ?? [], asks: d.asks ?? [] };
@@ -44,7 +48,9 @@ export async function orderBook(symbol: string, limit = 20): Promise<{ bids: [st
 /** Single-symbol quote so crypto tickers can flow through the same /api/quotes path as stocks. */
 export async function quote(symbol: string): Promise<Quote> {
   const pair = symbol.toUpperCase() + "USDT";
-  const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${encodeURIComponent(pair)}`);
+  const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${encodeURIComponent(pair)}`, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`binance ticker ${res.status}`);
   const d = await res.json();
   return {
@@ -92,7 +98,8 @@ export async function history(symbol: string, rangeKey: string): Promise<Candle[
   const { interval, limit } = RANGE_TO_KLINE[rangeKey] ?? RANGE_TO_KLINE["6M"];
   const pair = symbol.toUpperCase() + "USDT";
   const res = await fetch(
-    `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(pair)}&interval=${interval}&limit=${limit}`
+    `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(pair)}&interval=${interval}&limit=${limit}`,
+    { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
   );
   if (!res.ok) throw new Error(`binance klines ${res.status}`);
   const rows: any[] = await res.json();

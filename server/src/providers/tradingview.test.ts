@@ -61,4 +61,25 @@ describe("europeMarketScan", () => {
     // reject the whole scan because of it (Promise.allSettled).
     expect(rows.length).toBe(2);
   });
+
+  it("fails fast when a scan request hangs past PROVIDER_FETCH_TIMEOUT_MS instead of hanging forever", async () => {
+    const ORIGINAL_TIMEOUT = process.env.PROVIDER_FETCH_TIMEOUT_MS;
+    process.env.PROVIDER_FETCH_TIMEOUT_MS = "50";
+    vi.resetModules();
+    try {
+      const fetchMock = vi.fn((_url: string, opts?: { signal?: AbortSignal }) => {
+        // Never resolves on its own — only rejects once the timeout's AbortSignal fires.
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const { scanFundamentals } = await import("./tradingview.js");
+      await expect(scanFundamentals([{ symbol: "AAPL", exchange: "NASDAQ" }])).rejects.toThrow();
+    } finally {
+      if (ORIGINAL_TIMEOUT === undefined) delete process.env.PROVIDER_FETCH_TIMEOUT_MS;
+      else process.env.PROVIDER_FETCH_TIMEOUT_MS = ORIGINAL_TIMEOUT;
+      vi.resetModules();
+    }
+  });
 });

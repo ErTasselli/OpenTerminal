@@ -3,6 +3,8 @@
 // day's file once (the route layer caches it), then look symbols up from it.
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 export type ShortVolumeRow = {
   date: string; // YYYYMMDD
   shortVolume: number;
@@ -17,6 +19,7 @@ function fmtDate(d: Date): string {
 async function fetchDay(dateStr: string): Promise<Map<string, ShortVolumeRow> | null> {
   const res = await fetch(`https://cdn.finra.org/equity/regsho/daily/CNMSshvol${dateStr}.txt`, {
     headers: { "User-Agent": UA },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   const text = await res.text();
