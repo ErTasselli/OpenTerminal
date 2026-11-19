@@ -110,6 +110,8 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 
 > ⚠️ These are public endpoints, not officially licensed data feeds — treat prices as delayed/indicative, not execution‑grade. See [`server/src/providers/`](server/src/providers) — each provider is a small, isolated module, so swapping or adding a data source is a 30‑minute job.
 
+Setting `FINNHUB_API_KEY` enables an additional quote/history fallback tier (Finnhub); the app works fine without it, the chain just has one fewer tier.
+
 <br/>
 
 ## 🚀 Quick start
