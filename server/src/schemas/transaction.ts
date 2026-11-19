@@ -23,10 +23,17 @@ export const txSchema = z
     option_type: z.enum(["CALL", "PUT"]).nullable().optional(),
     strike: z.number().nullable().optional(),
     expiration: z.string().nullable().optional(),
+    // ADR-0004: nullable grouping key shared by both Legs of a Credit Spread.
+    // Independent of the OPTION/EQUITY branch below (unlike option_type/strike/
+    // expiration, it isn't nulled out for an EQUITY row) since nothing about it
+    // is OPTION-specific — it's just unused by today's single-leg manual entry
+    // and Pending Action confirm paths, which never set it.
+    spread_id: z.string().min(1).nullable().optional(),
   })
   .transform((data, ctx) => {
+    const spread_id = data.spread_id ?? null;
     if (data.instrument_type !== "OPTION") {
-      return { ...data, option_type: null, strike: null, expiration: null };
+      return { ...data, option_type: null, strike: null, expiration: null, spread_id };
     }
     if (data.option_type !== "CALL" && data.option_type !== "PUT") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["option_type"], message: "option_type must be CALL or PUT for an OPTION transaction" });
@@ -37,7 +44,7 @@ export const txSchema = z
     if (typeof data.expiration !== "string" || data.expiration.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expiration"], message: "expiration is required for an OPTION transaction" });
     }
-    return data;
+    return { ...data, spread_id };
   });
 
 export type Tx = z.infer<typeof txSchema>;

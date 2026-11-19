@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db } from "../db.js";
 import { txSchema } from "../schemas/transaction.js";
+import { creditSpreadRequestSchema, validateCreditSpreadLegs } from "../schemas/creditSpread.js";
 
 export const portfolioRouter = Router();
 
@@ -56,6 +58,92 @@ portfolioRouter.post("/:id/transactions", (req, res) => {
         t.expiration
       );
     res.status(201).json({ id: info.lastInsertRowid, ...t });
+  } catch {
+    res.status(404).json({ error: "portfolio not found" });
+  }
+});
+
+const insertTransaction = db.prepare(
+  "INSERT INTO transactions (portfolio_id, symbol, side, quantity, price, executed_at, instrument_type, option_type, strike, expiration, spread_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+);
+
+/**
+ * POST /:id/credit-spreads (issue #51, ADR-0004): submits both Legs of a Credit
+ * Spread as one linked write instead of two independent manual entries with no
+ * relationship to each other. The request shares one underlying symbol/
+ * option_type/expiration/quantity/executed_at across both Legs and gives each
+ * its own strike + price, so the short Leg (SELL) and long Leg (BUY) it builds
+ * below always match on symbol/option_type/expiration and always land on
+ * opposite sides by construction. validateCreditSpreadLegs still checks all
+ * four ADR-0004 invariants generically (not just the two reachable from this
+ * shape — different strikes and net credit) since it scopes to any two
+ * Transactions sharing a spread_id, not just ones submitted this way; see its
+ * unit tests in schemas/creditSpread.test.ts for the invariants this
+ * particular request body can't violate.
+ *
+ * Reuses txSchema (ADR-0002: the same validation must apply everywhere a
+ * Transaction is written) to validate each Leg, and writes both rows in one
+ * db.transaction so a spread is never persisted half-written. Does not touch
+ * position-aggregation (GET /:id/positions still folds each Leg into its own
+ * Position) — that's issue #52.
+ */
+portfolioRouter.post("/:id/credit-spreads", (req, res) => {
+  const parsedReq = creditSpreadRequestSchema.safeParse(req.body);
+  if (!parsedReq.success) return res.status(400).json({ error: parsedReq.error.message });
+  const r = parsedReq.data;
+
+  const spreadId = randomUUID();
+  const shortLegRaw = {
+    symbol: r.symbol,
+    side: "SELL" as const,
+    quantity: r.quantity,
+    price: r.short_price,
+    executed_at: r.executed_at,
+    instrument_type: "OPTION" as const,
+    option_type: r.option_type,
+    strike: r.short_strike,
+    expiration: r.expiration,
+    spread_id: spreadId,
+  };
+  const longLegRaw = { ...shortLegRaw, side: "BUY" as const, price: r.long_price, strike: r.long_strike };
+
+  const parsedShort = txSchema.safeParse(shortLegRaw);
+  const parsedLong = txSchema.safeParse(longLegRaw);
+  if (!parsedShort.success) return res.status(400).json({ error: parsedShort.error.message });
+  if (!parsedLong.success) return res.status(400).json({ error: parsedLong.error.message });
+
+  const invariantErrors = validateCreditSpreadLegs(parsedShort.data, parsedLong.data);
+  if (invariantErrors.length > 0) return res.status(400).json({ error: invariantErrors.join("; ") });
+
+  const insertSpread = db.transaction((short: typeof parsedShort.data, long: typeof parsedLong.data) => {
+    const insertLeg = (t: typeof short) =>
+      insertTransaction.run(
+        req.params.id,
+        t.symbol,
+        t.side,
+        t.quantity,
+        t.price,
+        t.executed_at,
+        t.instrument_type,
+        t.option_type,
+        t.strike,
+        t.expiration,
+        t.spread_id
+      );
+    const shortInfo = insertLeg(short);
+    const longInfo = insertLeg(long);
+    return { shortId: shortInfo.lastInsertRowid, longId: longInfo.lastInsertRowid };
+  });
+
+  try {
+    const { shortId, longId } = insertSpread(parsedShort.data, parsedLong.data);
+    res.status(201).json({
+      spread_id: spreadId,
+      legs: [
+        { id: shortId, ...parsedShort.data },
+        { id: longId, ...parsedLong.data },
+      ],
+    });
   } catch {
     res.status(404).json({ error: "portfolio not found" });
   }
