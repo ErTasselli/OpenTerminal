@@ -13,12 +13,19 @@ function toAnthropicTool(tool: ToolDef) {
  * against Anthropic's own accepted `media_type` set upstream (see validateImagePart in
  * types.ts), so the cast here is safe. */
 function toAnthropicContentBlock(part: ChatMessagePart): Anthropic.ContentBlockParam {
-  return part.type === "text"
-    ? { type: "text", text: part.text }
-    : {
-        type: "image",
-        source: { type: "base64", media_type: part.mimeType as Anthropic.Base64ImageSource["media_type"], data: part.data },
-      };
+  if (part.type === "text") return { type: "text", text: part.text };
+  if (part.type === "image") {
+    return {
+      type: "image",
+      source: { type: "base64", media_type: part.mimeType as Anthropic.Base64ImageSource["media_type"], data: part.data },
+    };
+  }
+  // llm/imageHistoryCap.ts's capLiveImages resolves every `image-ref` into either a
+  // rehydrated `image` or a text placeholder before any message list reaches a
+  // provider -- reaching here means that contract was violated upstream (routes/ai.ts
+  // called provider.chat() without running the message list through capLiveImages
+  // first), which must fail loudly rather than silently drop the image.
+  throw new Error(`Unresolved image-ref part (id=${part.id}) reached the anthropic provider.`);
 }
 
 /** Neutral ChatMessage -> Anthropic's MessageParam wire format. Plain-string content (the

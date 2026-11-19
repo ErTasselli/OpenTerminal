@@ -12,6 +12,15 @@ const REQUEST_TIMEOUT_MS = 120_000;
 // `content` and its image parts' data become `images`.
 function toOllamaMessage(message: ChatMessage): { role: string; content: string; images?: string[] } {
   if (typeof message.content === "string") return { role: message.role, content: message.content };
+  // llm/imageHistoryCap.ts's capLiveImages resolves every `image-ref` into either a
+  // rehydrated `image` or a text placeholder before any message list reaches a
+  // provider -- an `image-ref` surviving to here would otherwise be silently dropped by
+  // the `.filter` calls below (neither predicate matches it), so fail loudly instead;
+  // see the matching check in anthropic.ts.
+  const unresolved = message.content.find((p) => p.type === "image-ref");
+  if (unresolved && unresolved.type === "image-ref") {
+    throw new Error(`Unresolved image-ref part (id=${unresolved.id}) reached the ollama-cloud provider.`);
+  }
   const text = message.content
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
