@@ -4,6 +4,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useState } from "react";
 import { apiGet, apiPost, apiDelete, fmt, pctClass, type Quote } from "../../lib/api";
 import { symbolsParam } from "../../lib/symbol";
+import { validateCreditSpreadForm, type CreditSpreadFormInput } from "../../lib/creditSpread";
 
 type Portfolio = { id: number; name: string };
 type Position = {
@@ -44,11 +45,33 @@ const emptyForm = {
   expiration: "",
 };
 
+const emptySpreadForm: CreditSpreadFormInput = {
+  symbol: "",
+  optionType: "CALL",
+  expiration: "",
+  quantity: "",
+  shortStrike: "",
+  shortPrice: "",
+  longStrike: "",
+  longPrice: "",
+};
+
 export default function PortfolioWidget() {
   const qc = useQueryClient();
   const [portfolioId, setPortfolioId] = useState<number | null>(null);
   const [showTx, setShowTx] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [entryMode, setEntryMode] = useState<"SINGLE" | "SPREAD">("SINGLE");
+  const [spreadForm, setSpreadForm] = useState<CreditSpreadFormInput>(emptySpreadForm);
+  const [spreadError, setSpreadError] = useState<string | null>(null);
+
+  // Clears a stale inline validation error as soon as the user edits any
+  // field, rather than leaving it displayed (misleadingly) until the next
+  // submit attempt.
+  function updateSpreadField<K extends keyof CreditSpreadFormInput>(key: K, value: CreditSpreadFormInput[K]) {
+    setSpreadForm((f) => ({ ...f, [key]: value }));
+    setSpreadError(null);
+  }
 
   const { data: portfolios = [] } = useQuery({
     queryKey: ["portfolios"],
@@ -134,6 +157,35 @@ export default function PortfolioWidget() {
     },
   });
 
+  // Submits both Legs of a Credit Spread as one linked write via POST
+  // /:id/credit-spreads (issue #51/ADR-0004). Always builds short=SELL/
+  // long=BUY sharing one symbol/option_type/expiration, so the server's
+  // "opposite sides" and "same underlying" invariants can't be violated from
+  // this form; validateCreditSpreadForm mirrors the two invariants that can
+  // (different strikes, net credit) for inline validation before submit.
+  const addSpread = useMutation({
+    mutationFn: () => {
+      const payload = {
+        symbol: spreadForm.symbol.toUpperCase(),
+        option_type: spreadForm.optionType,
+        expiration: spreadForm.expiration,
+        quantity: Number(spreadForm.quantity),
+        executed_at: new Date().toISOString(),
+        short_strike: Number(spreadForm.shortStrike),
+        short_price: Number(spreadForm.shortPrice),
+        long_strike: Number(spreadForm.longStrike),
+        long_price: Number(spreadForm.longPrice),
+      };
+      return apiPost(`/api/portfolios/${pid}/credit-spreads`, payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["positions", pid] });
+      qc.invalidateQueries({ queryKey: ["transactions", pid] });
+      setSpreadForm(emptySpreadForm);
+      setSpreadError(null);
+    },
+  });
+
   const totals = positions.reduce(
     (acc, p) => {
       const last = lastPriceFor(p);
@@ -165,37 +217,81 @@ export default function PortfolioWidget() {
         </span>
       </div>
 
-      <form
-        className="flex gap-1 p-1 border-b border-[var(--border)]"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const ok =
-            form.symbol && form.quantity && form.price &&
-            (form.instrumentType !== "OPTION" || (form.optionType && form.strike && form.expiration));
-          if (ok) addTx.mutate();
-        }}
-      >
-        <input className="w-20" placeholder="Ticker" value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })} />
-        <select value={form.side} onChange={(e) => setForm({ ...form, side: e.target.value })}>
-          <option>BUY</option><option>SELL</option>
-        </select>
-        <select value={form.instrumentType} onChange={(e) => setForm({ ...form, instrumentType: e.target.value })}>
-          <option>EQUITY</option><option>OPTION</option>
-        </select>
-        <input className="w-20" placeholder="Qty" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
-        <input className="w-24" placeholder="Price" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
-        {form.instrumentType === "OPTION" && (
-          <>
-            <select value={form.optionType} onChange={(e) => setForm({ ...form, optionType: e.target.value })}>
-              <option>CALL</option><option>PUT</option>
-            </select>
-            <input className="w-20" placeholder="Strike" value={form.strike} onChange={(e) => setForm({ ...form, strike: e.target.value })} />
-            <input className="w-32" type="date" value={form.expiration} onChange={(e) => setForm({ ...form, expiration: e.target.value })} />
-          </>
-        )}
-        <button className="term-btn" type="submit">ADD</button>
-        {addTx.error && <span className="down">{(addTx.error as Error).message}</span>}
-      </form>
+      <div className="flex gap-2 p-1 items-center">
+        <button
+          className={`term-btn ${entryMode === "SINGLE" ? "active" : ""}`}
+          onClick={() => setEntryMode("SINGLE")}
+        >
+          SINGLE LEG
+        </button>
+        <button
+          className={`term-btn ${entryMode === "SPREAD" ? "active" : ""}`}
+          onClick={() => setEntryMode("SPREAD")}
+        >
+          CREDIT SPREAD
+        </button>
+      </div>
+
+      {entryMode === "SINGLE" ? (
+        <form
+          className="flex gap-1 p-1 border-b border-[var(--border)]"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const ok =
+              form.symbol && form.quantity && form.price &&
+              (form.instrumentType !== "OPTION" || (form.optionType && form.strike && form.expiration));
+            if (ok) addTx.mutate();
+          }}
+        >
+          <input className="w-20" placeholder="Ticker" value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value.toUpperCase() })} />
+          <select value={form.side} onChange={(e) => setForm({ ...form, side: e.target.value })}>
+            <option>BUY</option><option>SELL</option>
+          </select>
+          <select value={form.instrumentType} onChange={(e) => setForm({ ...form, instrumentType: e.target.value })}>
+            <option>EQUITY</option><option>OPTION</option>
+          </select>
+          <input className="w-20" placeholder="Qty" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+          <input className="w-24" placeholder="Price" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+          {form.instrumentType === "OPTION" && (
+            <>
+              <select value={form.optionType} onChange={(e) => setForm({ ...form, optionType: e.target.value })}>
+                <option>CALL</option><option>PUT</option>
+              </select>
+              <input className="w-20" placeholder="Strike" value={form.strike} onChange={(e) => setForm({ ...form, strike: e.target.value })} />
+              <input className="w-32" type="date" value={form.expiration} onChange={(e) => setForm({ ...form, expiration: e.target.value })} />
+            </>
+          )}
+          <button className="term-btn" type="submit">ADD</button>
+          {addTx.error && <span className="down">{(addTx.error as Error).message}</span>}
+        </form>
+      ) : (
+        <form
+          className="flex gap-1 p-1 border-b border-[var(--border)] flex-wrap items-center"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const err = validateCreditSpreadForm(spreadForm);
+            setSpreadError(err);
+            if (!err) addSpread.mutate();
+          }}
+        >
+          <input className="w-20" placeholder="Ticker" value={spreadForm.symbol} onChange={(e) => updateSpreadField("symbol", e.target.value.toUpperCase())} />
+          <select value={spreadForm.optionType} onChange={(e) => updateSpreadField("optionType", e.target.value as "CALL" | "PUT")}>
+            <option>CALL</option><option>PUT</option>
+          </select>
+          <input className="w-32" type="date" value={spreadForm.expiration} onChange={(e) => updateSpreadField("expiration", e.target.value)} />
+          <input className="w-16" placeholder="Qty" value={spreadForm.quantity} onChange={(e) => updateSpreadField("quantity", e.target.value)} />
+          <span className="dim">Short</span>
+          <input className="w-20" placeholder="Strike" value={spreadForm.shortStrike} onChange={(e) => updateSpreadField("shortStrike", e.target.value)} />
+          <input className="w-20" placeholder="Price" value={spreadForm.shortPrice} onChange={(e) => updateSpreadField("shortPrice", e.target.value)} />
+          <span className="dim">Long</span>
+          <input className="w-20" placeholder="Strike" value={spreadForm.longStrike} onChange={(e) => updateSpreadField("longStrike", e.target.value)} />
+          <input className="w-20" placeholder="Price" value={spreadForm.longPrice} onChange={(e) => updateSpreadField("longPrice", e.target.value)} />
+          <button className="term-btn" type="submit">ADD SPREAD</button>
+          {(spreadError || addSpread.error) && (
+            <span className="down">{spreadError ?? (addSpread.error as Error).message}</span>
+          )}
+        </form>
+      )}
 
       {!showTx ? (
         <table className="data-table">
