@@ -12,8 +12,13 @@ import { mapWithConcurrency } from "../concurrency.js";
 export const SEC_UA = `OpenTerminal ${process.env.SEC_EDGAR_CONTACT ?? "admin@example.com"}`;
 const parser = new XMLParser({ ignoreAttributes: false });
 
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 async function edgarFetch(url: string): Promise<any> {
-  const res = await fetch(url, { headers: { "User-Agent": SEC_UA, Accept: "application/json" } });
+  const res = await fetch(url, {
+    headers: { "User-Agent": SEC_UA, Accept: "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`sec edgar ${res.status} for ${url}`);
   return res.json();
 }
@@ -88,7 +93,7 @@ async function parseForm4(cik: string, filing: FilingRef): Promise<InsiderTransa
   // the raw data XML sits at the accession folder root under its own filename.
   const filename = filing.primaryDocument.split("/").pop();
   const url = `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accessionNoDashes}/${filename}`;
-  const res = await fetch(url, { headers: { "User-Agent": SEC_UA } });
+  const res = await fetch(url, { headers: { "User-Agent": SEC_UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) return [];
   const xml = await res.text();
   const doc = parser.parse(xml)?.ownershipDocument;

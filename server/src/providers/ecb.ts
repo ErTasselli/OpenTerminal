@@ -7,9 +7,11 @@
 
 export type SeriesPoint = { date: string; value: number };
 
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 export async function series(flowRef: string, key: string, lastN = 260): Promise<SeriesPoint[]> {
   const url = `https://data-api.ecb.europa.eu/service/data/${flowRef}/${key}?format=csvdata&lastNObservations=${lastN}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`ecb ${res.status} for ${flowRef}/${key}`);
   const text = await res.text();
   const lines = text.trim().split("\n");

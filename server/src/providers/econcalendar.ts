@@ -17,9 +17,12 @@ export type EconEvent = {
 
 type FFRaw = { title: string; country: string; date: string; impact: string; forecast: string; previous: string };
 
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 async function fetchWeek(which: "thisweek" | "nextweek"): Promise<FFRaw[]> {
   const res = await fetch(`https://nfs.faireconomy.media/ff_calendar_${which}.json`, {
     headers: { "User-Agent": "Mozilla/5.0" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`forexfactory ${res.status} for ${which}`);
   return res.json();
