@@ -5,9 +5,12 @@ import { useState } from "react";
 import { apiGet, apiPost, apiDelete, fmt, pctClass, type Quote } from "../../lib/api";
 import { symbolsParam } from "../../lib/symbol";
 import { validateCreditSpreadForm, type CreditSpreadFormInput } from "../../lib/creditSpread";
+import { computeCreditSpreadPnl } from "../../lib/creditSpreadPnl";
 
 type Portfolio = { id: number; name: string };
-type Position = {
+// A single-leg holding (issue #52 keeps these keyed by symbol, or by
+// symbol/option_type/strike/expiration for an OPTION).
+type SingleLegPosition = {
   symbol: string;
   instrumentType: "EQUITY" | "OPTION";
   optionType: "CALL" | "PUT" | null;
@@ -18,6 +21,25 @@ type Position = {
   realizedPnl: number;
   multiplier: number;
 };
+// A Credit Spread's two Legs folded into one entry (issue #52, ADR-0004).
+// Deliberately has no `avgCost` — see issue #54 Part B: the totals reducer
+// below must not assume every position has one.
+type CreditSpreadPosition = {
+  symbol: string;
+  instrumentType: "CREDIT_SPREAD";
+  optionType: "CALL" | "PUT" | null;
+  expiration: string | null;
+  shortStrike: number;
+  longStrike: number;
+  quantity: number;
+  shortQuantity: number;
+  longQuantity: number;
+  netCredit: number;
+  maxRisk: number;
+  realizedPnl: number;
+  multiplier: number;
+};
+type Position = SingleLegPosition | CreditSpreadPosition;
 type Tx = {
   id: number;
   symbol: string;
@@ -101,10 +123,15 @@ export default function PortfolioWidget() {
 
   // Options are priced off their own contract (strike/expiration/type), not the
   // underlying's equity quote — one option-chain fetch per unique (symbol,
-  // expiration) pair covers every position sharing that pair regardless of strike.
+  // expiration) pair covers every position sharing that pair regardless of
+  // strike. A CREDIT_SPREAD entry needs the same chain (it already covers
+  // both its legs' strikes in one fetch), so it shares this key set — no
+  // second fetch needed per issue #54's "what to build" note.
   const optionChainKeys = [
     ...new Set(
-      positions.filter((p) => p.instrumentType === "OPTION").map((p) => `${p.symbol}|${p.expiration}`)
+      positions
+        .filter((p) => p.instrumentType === "OPTION" || p.instrumentType === "CREDIT_SPREAD")
+        .map((p) => `${p.symbol}|${p.expiration}`)
     ),
   ];
   const optionChainResults = useQueries({
@@ -118,15 +145,39 @@ export default function PortfolioWidget() {
     }),
   });
 
-  function lastPriceFor(p: Position): number | null {
+  function chainFor(symbol: string, expiration: string | null): OptionChain | undefined {
+    const idx = optionChainKeys.indexOf(`${symbol}|${expiration}`);
+    return optionChainResults[idx]?.data;
+  }
+
+  function priceAtStrike(chain: OptionChain | undefined, optionType: "CALL" | "PUT" | null, strike: number): number | null {
+    if (!chain) return null;
+    const rows = optionType === "PUT" ? chain.puts : chain.calls;
+    return rows.find((r) => r.strike === strike)?.lastPrice ?? null;
+  }
+
+  function lastPriceFor(p: SingleLegPosition): number | null {
     if (p.instrumentType !== "OPTION") {
       return quotes.find((x) => x.symbol === p.symbol)?.price ?? null;
     }
-    const idx = optionChainKeys.indexOf(`${p.symbol}|${p.expiration}`);
-    const chain = optionChainResults[idx]?.data;
-    if (!chain || p.strike === null) return null;
-    const rows = p.optionType === "PUT" ? chain.puts : chain.calls;
-    return rows.find((r) => r.strike === p.strike)?.lastPrice ?? null;
+    if (p.strike === null) return null;
+    return priceAtStrike(chainFor(p.symbol, p.expiration), p.optionType, p.strike);
+  }
+
+  // Shared by the per-row display (issue #54 Part A) and the totals reducer
+  // (Part B) so both compute a spread's live P&L the same way — the kind of
+  // duplication the #52 server-side code review flagged, avoided here by
+  // pulling the math into computeCreditSpreadPnl (web/lib/creditSpreadPnl.ts)
+  // and only looking up the two legs' chain prices in each caller.
+  function creditSpreadPnlFor(p: CreditSpreadPosition) {
+    const chain = chainFor(p.symbol, p.expiration);
+    return computeCreditSpreadPnl({
+      quantity: p.quantity,
+      netCredit: p.netCredit,
+      multiplier: p.multiplier,
+      shortLastPrice: priceAtStrike(chain, p.optionType, p.shortStrike),
+      longLastPrice: priceAtStrike(chain, p.optionType, p.longStrike),
+    });
   }
 
   const addTx = useMutation({
@@ -188,6 +239,22 @@ export default function PortfolioWidget() {
 
   const totals = positions.reduce(
     (acc, p) => {
+      // issue #54 Part B: CREDIT_SPREAD has no avgCost (see the #52
+      // aggregation shape) — the single-leg math below would divide/compare
+      // against `undefined` and produce NaN, so it's branched out here and
+      // computed via the same computeCreditSpreadPnl used for the per-row
+      // display, instead of assuming avgCost unconditionally.
+      if (p.instrumentType === "CREDIT_SPREAD") {
+        const pnl = creditSpreadPnlFor(p);
+        // Falls back to costBasis (always known) while the chain hasn't
+        // loaded yet, mirroring the `last ?? avgCost` fallback below — both
+        // keep a position's contribution to unrealized P&L at exactly 0
+        // until live prices are available, rather than NaN.
+        acc.marketValue += pnl.marketValue ?? pnl.costBasis;
+        acc.cost += pnl.costBasis;
+        acc.realized += p.realizedPnl;
+        return acc;
+      }
       const last = lastPriceFor(p);
       const mv = (last ?? p.avgCost) * p.quantity * p.multiplier;
       acc.marketValue += mv;
@@ -300,6 +367,30 @@ export default function PortfolioWidget() {
           </thead>
           <tbody>
             {positions.map((p) => {
+              // Issue #54 Part A: a CREDIT_SPREAD position (both Legs already
+              // folded server-side per #52) renders as one row instead of two
+              // unrelated OPTION rows. Reuses this same table/columns rather
+              // than a parallel one — "Avg Cost" and "Last" don't apply to a
+              // two-leg spread, so this row repurposes them to show net
+              // credit and max risk, which this ticket's acceptance criteria
+              // require surfacing per-row.
+              if (p.instrumentType === "CREDIT_SPREAD") {
+                const pnl = creditSpreadPnlFor(p);
+                const sideLabel = p.optionType === "PUT" ? "Put" : "Call";
+                const typeLabel = `$${p.shortStrike}/${p.longStrike} ${sideLabel} Credit Spread exp ${p.expiration}`;
+                return (
+                  <tr key={`${p.symbol}-CREDIT_SPREAD-${p.optionType ?? ""}-${p.shortStrike}-${p.longStrike}-${p.expiration ?? ""}`}>
+                    <td className="font-bold">{p.symbol}</td>
+                    <td className="dim">{typeLabel}</td>
+                    <td>{fmt(p.quantity, 4)}</td>
+                    <td>Net {fmt(p.netCredit)}</td>
+                    <td>Risk {fmt(p.maxRisk)}</td>
+                    <td>{fmt(pnl.marketValue)}</td>
+                    <td className={pctClass(pnl.unrealizedPnl)}>{fmt(pnl.unrealizedPnl)}</td>
+                    <td className={pctClass(p.realizedPnl)}>{fmt(p.realizedPnl)}</td>
+                  </tr>
+                );
+              }
               const last = lastPriceFor(p);
               const mv = last !== null ? last * p.quantity * p.multiplier : null;
               const upnl = last !== null ? (last - p.avgCost) * p.quantity * p.multiplier : null;
