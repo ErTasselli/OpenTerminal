@@ -9,6 +9,7 @@ import * as ecb from "../providers/ecb.js";
 import * as tradingview from "../providers/tradingview.js";
 import * as coingecko from "../providers/coingecko.js";
 import * as binance from "../providers/binance.js";
+import * as kraken from "../providers/kraken.js";
 import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
@@ -454,6 +455,7 @@ marketRouter.get("/crypto", async (req, res) => {
       withFallback([
         ["coingecko", () => coingecko.markets(50)],
         ["binance", () => binance.markets()],
+        ["kraken", () => kraken.markets()],
       ])
     );
     res.json(data);
