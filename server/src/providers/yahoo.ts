@@ -7,6 +7,11 @@
 // stays consistent) until it draws a 429, at which point we rotate to the
 // next untried pool entry — see rotateUserAgent() below — and let operators
 // pin their own explicitly.
+// A hung upstream must fail fast into the fallback/stale-cache path rather
+// than blocking the fallback chain for minutes (Node's fetch has no default
+// timeout). Overridable so tests can assert fast failure without real waits.
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 const UA_POOL = [
   "Mozilla/5.0 (X11; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0",
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
@@ -77,11 +82,16 @@ async function getSession(): Promise<{ cookie: string; crumb: string }> {
   if (session && Date.now() - session.fetched < 30 * 60 * 1000) return session;
   if (Date.now() < sessionFailedUntil) throw new Error("yahoo: crumb fetch failed (cached failure)");
   try {
-    const res = await fetch("https://fc.yahoo.com/", { headers: { "User-Agent": UA }, redirect: "manual" });
+    const res = await fetch("https://fc.yahoo.com/", {
+      headers: { "User-Agent": UA },
+      redirect: "manual",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0];
     if (!cookie) throw new Error("yahoo: no session cookie");
     const crumbRes = await fetch("https://query2.finance.yahoo.com/v1/test/getcrumb", {
       headers: { "User-Agent": UA, Cookie: cookie },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     const crumb = (await crumbRes.text()).trim();
     if (!crumbRes.ok || !crumb || crumb.includes("<")) throw new Error("yahoo: crumb fetch failed");
@@ -139,7 +149,7 @@ async function yfetch(url: string, withCrumb = false): Promise<any> {
         headers.Cookie = s.cookie;
         full += (url.includes("?") ? "&" : "?") + "crumb=" + encodeURIComponent(s.crumb);
       }
-      const res = await fetch(full, { headers });
+      const res = await fetch(full, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!res.ok) {
         if (res.status === 429) {
           if (rotateUserAgent()) {

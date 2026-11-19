@@ -1,5 +1,10 @@
 import type { Quote, Candle } from "./yahoo.js";
 
+// A hung upstream must fail fast into the fallback/stale-cache path rather
+// than blocking the fallback chain for minutes (Node's fetch has no default
+// timeout). Overridable so tests can assert fast failure without real waits.
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const HEADERS = { "User-Agent": UA, Accept: "application/json", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
 
@@ -21,7 +26,7 @@ function release(): void {
 async function nfetch(url: string): Promise<any> {
   await acquire();
   try {
-    const res = await fetch(url, { headers: HEADERS });
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`nasdaq ${res.status} for ${url}`);
     const json = await res.json();
     if (!json?.data) throw new Error(`nasdaq: no data in response for ${url}`);
