@@ -13,6 +13,7 @@ import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
+import * as finnhub from "../providers/finnhub.js";
 
 export const marketRouter = Router();
 
@@ -119,9 +120,10 @@ async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
  * here does at most ~150 crypto lookups (only for recognized crypto symbols,
  * mutually exclusive with the stages below) + up to 300 Nasdaq calls (2 per
  * miss) + 1 batched Yahoo call + up to FALLBACK_PER_SYMBOL_CAP per-symbol
- * Yahoo chart calls + up to FALLBACK_PER_SYMBOL_CAP Stooq calls + 1 batched
- * TradingView call. Repetition beyond that is bounded by marketRouter's
- * per-IP rate limit (see index.ts).
+ * Yahoo chart calls + up to FALLBACK_PER_SYMBOL_CAP Stooq calls + up to
+ * FALLBACK_PER_SYMBOL_CAP Finnhub calls (no-op if FINNHUB_API_KEY isn't set)
+ * + 1 batched TradingView call. Repetition beyond that is bounded by
+ * marketRouter's per-IP rate limit (see index.ts).
  */
 const FALLBACK_PER_SYMBOL_CAP = 20;
 async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
@@ -183,6 +185,18 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   if (remaining.length > 0) {
     const batch = remaining.slice(0, FALLBACK_PER_SYMBOL_CAP);
     const results = await Promise.allSettled(batch.map((s) => stooq.quote(s)));
+    results.forEach((r, i) => {
+      if (r.status === "fulfilled") fetched.set(batch[i], r.value);
+    });
+    remaining = remaining.filter((s) => !fetched.has(s));
+  }
+
+  // Best-effort last resort: key-gated (throws immediately if FINNHUB_API_KEY
+  // isn't set, which Promise.allSettled just records as a rejection here), so
+  // this stage is a no-op rather than a hard failure when no key is configured.
+  if (remaining.length > 0) {
+    const batch = remaining.slice(0, FALLBACK_PER_SYMBOL_CAP);
+    const results = await Promise.allSettled(batch.map((s) => finnhub.quote(s)));
     results.forEach((r, i) => {
       if (r.status === "fulfilled") fetched.set(batch[i], r.value);
     });
@@ -326,10 +340,18 @@ function historyProviders(symbol: string, rangeKey: string): Array<[string, () =
     () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval),
   ];
   const stooqAttempt: [string, () => Promise<yahoo.Candle[]>] = ["stooq", () => stooq.history(symbol)];
+  // Key-gated and not yet proven in production, so it's a safety net behind
+  // the existing free/keyless tiers rather than ahead of them. A missing
+  // FINNHUB_API_KEY throws immediately (see finnhub.ts), which withFallback()
+  // treats the same as any other attempt failing — it just moves on.
+  const finnhubAttempt: [string, () => Promise<yahoo.Candle[]>] = [
+    "finnhub",
+    () => finnhub.history(symbol, rangeKey),
+  ];
 
   return INTRADAY_RANGES.has(rangeKey)
-    ? [yahooAttempt, nasdaqAttempt, stooqAttempt]
-    : [nasdaqAttempt, yahooAttempt, stooqAttempt];
+    ? [yahooAttempt, nasdaqAttempt, stooqAttempt, finnhubAttempt]
+    : [nasdaqAttempt, yahooAttempt, stooqAttempt, finnhubAttempt];
 }
 
 marketRouter.get("/history/:symbol", async (req, res) => {
