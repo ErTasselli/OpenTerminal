@@ -1,5 +1,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { secEdgarFilings } from "./news.js";
+import { NEWS_SOURCES, secEdgarFilings } from "./news.js";
+
+describe("NEWS_SOURCES", () => {
+  it("includes the Finnhub structured news sources with the right scope", () => {
+    const companySource = NEWS_SOURCES.find((s) => s.name === "finnhub-company-news");
+    const marketSource = NEWS_SOURCES.find((s) => s.name === "finnhub-market-news");
+
+    expect(companySource?.scope).toBe("symbol");
+    expect(marketSource?.scope).toBe("global");
+  });
+});
 
 // The CIK map is cached by a fixed key in `cache.ts`, so whichever test runs first
 // locks it in for the rest of this file — every symbol used below must be listed here.

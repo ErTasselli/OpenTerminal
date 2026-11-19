@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { resolveCik, SEC_UA } from "./secedgar.js";
+import { companyNews, marketNews } from "./finnhubNews.js";
 
 export type NewsItem = {
   title: string;
@@ -99,11 +100,18 @@ export const NEWS_SOURCES: NewsSource[] = [
   { name: "google-symbol-rss", scope: "symbol", fetch: (symbol) => topNews(`${symbol} stock`) },
   { name: "nasdaq-press-releases", scope: "symbol", fetch: (symbol) => nasdaqNews(symbol) },
   { name: "sec-edgar-filings", scope: "symbol", fetch: (symbol) => secEdgarFilings(symbol) },
+  // Structured (non-RSS-scraping) source: Finnhub's /company-news endpoint, gated on
+  // FINNHUB_API_KEY (see finnhubNews.ts). When the key is missing it throws immediately
+  // and Promise.allSettled in the /news route simply drops this source from the fanout.
+  { name: "finnhub-company-news", scope: "symbol", fetch: (symbol) => companyNews(symbol) },
   { name: "google-market-rss", scope: "global", fetch: () => topNews("stock market") },
   { name: "google-fed-rss", scope: "global", fetch: () => topNews("federal reserve economy") },
   { name: "fed-reserve-press-releases", scope: "global", fetch: () => fedReserveNews() },
   { name: "marketwatch-top-stories", scope: "global", fetch: () => marketWatchNews() },
   { name: "cnbc-top-news", scope: "global", fetch: () => cnbcNews() },
+  // Structured (non-RSS-scraping) source: Finnhub's /market-news endpoint, same
+  // FINNHUB_API_KEY gating as finnhub-company-news above.
+  { name: "finnhub-market-news", scope: "global", fetch: () => marketNews() },
 ];
 
 /** Merge, de-duplicate by normalized title, newest first. */
