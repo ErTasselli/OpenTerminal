@@ -30,10 +30,27 @@ function rssXml(items: Array<{ title: string; link: string }>): string {
   return `<?xml version="1.0"?><rss><channel>${itemsXml}</channel></rss>`;
 }
 
+// A minimal-but-valid nasdaq.quote() "info"/"summary" response pair -- just enough
+// fields for nasdaq.ts's quote() to resolve a Quote without throwing, so the
+// get_quote tool's test below exercises the real getQuotes waterfall rather than
+// stubbing it out.
+const NASDAQ_QUOTE_INFO = {
+  data: {
+    companyName: "Apple Inc.",
+    exchange: "NASDAQ",
+    marketStatus: "Market Open",
+    primaryData: { lastSalePrice: "$150.00", netChange: "1.00", percentageChange: "0.67%", previousClose: "$149.00" },
+    keyStats: { dayrange: { value: "148.00 - 151.00" }, fiftyTwoWeekHighLow: { value: "120.00 - 160.00" } },
+  },
+};
+const NASDAQ_QUOTE_SUMMARY = { data: { summaryData: {} } };
+
 // Routes every outbound fetch: calls to the active LLM Provider's own endpoint are served
-// in order from `providerResponses` (one JSON body per round-trip); every other URL (the
-// news tool's RSS/JSON sources) gets a generic successful empty-ish response, so the tool
-// executes for real against the news-search plumbing without depending on live network.
+// in order from `providerResponses` (one JSON body per round-trip); nasdaq's quote info/
+// summary endpoints (hit by the get_quote tool's getQuotes waterfall) get a minimal valid
+// quote response; every other URL (the news tool's RSS/JSON sources, nasdaq autocomplete,
+// etc.) gets a generic successful empty-ish response, so each tool executes for real
+// against its own plumbing without depending on live network.
 function mockAgenticFetch(providerResponses: unknown[]) {
   let call = 0;
   return vi.fn().mockImplementation((url: string) => {
@@ -47,6 +64,24 @@ function mockAgenticFetch(providerResponses: unknown[]) {
         headers: new Headers({ "content-type": "application/json" }),
         json: async () => body,
         text: async () => JSON.stringify(body),
+      });
+    }
+    if (String(url).includes("api.nasdaq.com/api/quote/") && String(url).includes("/info?")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => NASDAQ_QUOTE_INFO,
+        text: async () => JSON.stringify(NASDAQ_QUOTE_INFO),
+      });
+    }
+    if (String(url).includes("api.nasdaq.com/api/quote/") && String(url).includes("/summary?")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => NASDAQ_QUOTE_SUMMARY,
+        text: async () => JSON.stringify(NASDAQ_QUOTE_SUMMARY),
       });
     }
     return Promise.resolve({
@@ -274,6 +309,71 @@ describe("POST /api/ai/chat", () => {
       await handler(req, res, () => {});
 
       expect(res.json).toHaveBeenCalledWith({ text: "hi there" });
+    });
+
+    it("chains get_quote with search_news in the same round to answer one research question (#20)", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = mockAgenticFetch([
+        {
+          stop_reason: "tool_use",
+          content: [
+            { type: "text", text: "Let me pull the quote and the news." },
+            { type: "tool_use", id: "call_1", name: "get_quote", input: { symbol: "AAPL" } },
+            { type: "tool_use", id: "call_2", name: "search_news", input: { symbol: "AAPL" } },
+          ],
+        },
+        { stop_reason: "end_turn", content: [{ type: "text", text: "AAPL is at $150, up 0.67%, with stable headlines." }] },
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = { body: { messages: [{ role: "user", content: "How's AAPL doing right now?" }] } } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.json).toHaveBeenCalledWith({
+        text: "AAPL is at $150, up 0.67%, with stable headlines.",
+        toolCalls: [
+          { name: "get_quote", arguments: { symbol: "AAPL" } },
+          { name: "search_news", arguments: { symbol: "AAPL" } },
+        ],
+      });
+
+      // Both tool results -- the real quote (via the shared getQuotes waterfall) and the
+      // real headline (via the shared news-search plumbing) -- are folded back in one round.
+      const providerCalls = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes("api.anthropic.com"));
+      expect(providerCalls).toHaveLength(2);
+      const secondBody = JSON.parse(providerCalls[1][1].body);
+      const toolResultsMessage = secondBody.messages.at(-1).content;
+      expect(toolResultsMessage).toContain("Tool results");
+      expect(toolResultsMessage).toContain('"price":150');
+      expect(toolResultsMessage).toContain("Example headline");
+    });
+
+    it("executes the option-chain tool, returning the chain shape for the model to summarize", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = mockAgenticFetch([
+        {
+          stop_reason: "tool_use",
+          content: [{ type: "tool_use", id: "call_1", name: "get_option_chain", input: { symbol: "AAPL" } }],
+        },
+        { stop_reason: "end_turn", content: [{ type: "text", text: "Here's the AAPL chain." }] },
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = { body: { messages: [{ role: "user", content: "Show me AAPL's options chain" }] } } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.json).toHaveBeenCalledWith({
+        text: "Here's the AAPL chain.",
+        toolCalls: [{ name: "get_option_chain", arguments: { symbol: "AAPL" } }],
+      });
+
+      const providerCalls = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes("api.anthropic.com"));
+      const secondBody = JSON.parse(providerCalls[1][1].body);
+      expect(secondBody.messages.at(-1).content).toContain("Tool results");
     });
 
     it("round-trips tool-calling through the ollama-cloud provider too, not just anthropic", async () => {

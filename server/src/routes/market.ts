@@ -127,7 +127,11 @@ async function vixHistory(rangeKey: string): Promise<yahoo.Candle[]> {
  * marketRouter's per-IP rate limit (see index.ts).
  */
 const FALLBACK_PER_SYMBOL_CAP = 20;
-async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
+// Exported so the AI assistant's get_quote Tool Call (llm/marketTools.ts) can reuse
+// this exact provider-fallback waterfall for a single on-demand symbol lookup, instead
+// of re-implementing it -- the same reuse pattern as tools.ts's search_news wrapping
+// providers/news.ts.
+export async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   const fresh = new Map<string, yahoo.Quote>();
   const missing: string[] = [];
   for (const sym of symbols) {
@@ -440,29 +444,36 @@ marketRouter.get("/econ-calendar", async (req, res) => {
 
 // ---- options ----
 
+// Exported so the AI assistant's get_option_chain Tool Call (llm/marketTools.ts) can
+// reuse this exact nasdaq/yahoo fallback (and its cache) for an on-demand symbol
+// lookup, instead of re-implementing it -- same reuse pattern as getQuotes above.
+export async function getOptionChain(symbol: string, expiry?: string): Promise<nasdaq.NasdaqChain> {
+  return cached(`options:${symbol}:${expiry ?? "front"}`, 60_000, () =>
+    withFallback([
+      ["nasdaq", () => nasdaq.optionChain(symbol, expiry)],
+      [
+        "yahoo",
+        async () => {
+          const y = await yahoo.options(symbol);
+          return {
+            symbol: y.symbol,
+            underlyingPrice: y.underlyingPrice,
+            expirationDates: y.expirationDates.map((d: number) => new Date(d * 1000).toISOString().slice(0, 10)),
+            selectedDate: y.selectedDate ? new Date(y.selectedDate * 1000).toISOString().slice(0, 10) : null,
+            calls: y.calls,
+            puts: y.puts,
+          };
+        },
+      ],
+    ])
+  );
+}
+
 marketRouter.get("/options/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const expiry = req.query.expiry ? String(req.query.expiry) : undefined;
   try {
-    const data = await cached(`options:${symbol}:${expiry ?? "front"}`, 60_000, () =>
-      withFallback([
-        ["nasdaq", () => nasdaq.optionChain(symbol, expiry)],
-        [
-          "yahoo",
-          async () => {
-            const y = await yahoo.options(symbol);
-            return {
-              symbol: y.symbol,
-              underlyingPrice: y.underlyingPrice,
-              expirationDates: y.expirationDates.map((d: number) => new Date(d * 1000).toISOString().slice(0, 10)),
-              selectedDate: y.selectedDate ? new Date(y.selectedDate * 1000).toISOString().slice(0, 10) : null,
-              calls: y.calls,
-              puts: y.puts,
-            };
-          },
-        ],
-      ])
-    );
+    const data = await getOptionChain(symbol, expiry);
     res.json(data);
   } catch (err) {
     fail(req, res, err);
