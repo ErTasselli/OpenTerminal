@@ -12,8 +12,15 @@ export type NewsItem = {
 const parser = new XMLParser({ ignoreAttributes: false });
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
 
+// Per-request timeout for every outbound fetch in this module. One hanging RSS/news
+// source must not block the whole /api/news response, which otherwise waits on all
+// sources via Promise.allSettled with no bound on a single source's latency.
+// Overridable via env so tests can force a near-instant timeout instead of waiting
+// out a multi-second (or unbounded) hang.
+const FETCH_TIMEOUT_MS = Number(process.env.PROVIDER_FETCH_TIMEOUT_MS) || 9000;
+
 async function fetchRss(url: string, publisher: string, symbol: string | null): Promise<NewsItem[]> {
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const res = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`rss ${res.status} ${url}`);
   const xml = await res.text();
   const doc = parser.parse(xml);
@@ -66,7 +73,7 @@ export async function secEdgarFilings(symbol: string): Promise<NewsItem[]> {
   if (!cik) return [];
 
   const url = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=&dateb=&owner=include&count=10&output=atom`;
-  const res = await fetch(url, { headers: { "User-Agent": SEC_UA } });
+  const res = await fetch(url, { headers: { "User-Agent": SEC_UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`sec edgar ${res.status} for ${url}`);
   const xml = await res.text();
   const doc = parser.parse(xml);
