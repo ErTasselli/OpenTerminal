@@ -14,6 +14,9 @@ services:
       - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
       - LLM_MODEL=${LLM_MODEL:-}
+      # Vision-capable model used only for image-bearing turns under ollama-cloud
+      # (#29) — distinct from LLM_MODEL, which may be text-only.
+      - OLLAMA_VISION_MODEL=${OLLAMA_VISION_MODEL:-}
       - API_KEY=${API_KEY:-}
       - API_HOST=0.0.0.0 # safe: still only published to 127.0.0.1 above
       - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3000}
