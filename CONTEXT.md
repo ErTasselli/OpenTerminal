@@ -4,6 +4,18 @@ A terminal-style financial dashboard: a Next.js frontend backed by an Express/SQ
 
 ## Language
 
+**Transaction**:
+The base ledger unit: one row in `transactions`, representing a single fill — a BUY or SELL of an EQUITY or an OPTION (with `option_type`, `strike`, and `expiration` set), at a given quantity, price, and `executed_at` time. A Transaction is either entered manually or AI-proposed and confirmed; see Pending Action, which already describes confirming one as "adding, editing, or deleting a Transaction".
+
+**Position**:
+An aggregated holding, computed on the fly from a portfolio's Transactions rather than stored in its own table. `GET /api/portfolios/:id/positions` in `server/src/routes/portfolio.ts` folds Transactions in execution order into one Position per distinct instrument (keyed by symbol for an EQUITY, or by symbol/`option_type`/strike/expiration for an OPTION), using an average-cost method (not FIFO).
+
+**Leg**:
+A single Transaction that is one side of a multi-transaction options strategy, rather than standing on its own. Currently only Credit Spread groups Legs, by each Leg's Transaction sharing a `spread_id` value — a column decided in ADR-0004 but not yet added to `transactions`; a lone option Transaction is not a Leg of anything.
+
+**Credit Spread**:
+A 2-Transaction options strategy: selling one option and buying another of the same underlying/`option_type`/expiration at a different strike, for a net credit (the SELL leg's price exceeds the BUY leg's). ADR-0004 decides that its two Legs will share a `spread_id` value so they aggregate into one Position instead of two independent ones — that column and the aggregation change are not implemented yet, so today both legs still land as two independent Transactions and resolve to two independent Positions (see the "keeps two OPTION positions with different strikes ... separate" test in `server/src/routes/portfolio.test.ts`). It's the only multi-leg strategy currently named in the domain vocabulary; N-leg strategies (iron condors, etc.) are future work, per ADR-0004.
+
 **LLM Provider**:
 A named backend for AI chat completion (`anthropic` or `ollama-cloud`), each with its own credentials, base URL, and default model.
 _Avoid_: "Provider" alone — collides with the unrelated market-data providers in `server/src/providers/` (Binance, CoinGecko, Yahoo, Nasdaq, etc.), which are a different concept in a different domain.
