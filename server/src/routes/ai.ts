@@ -6,7 +6,12 @@ import { toAuditMessages } from "../llm/auditImages.js";
 import { capLiveImages } from "../llm/imageHistoryCap.js";
 import { NEWS_SEARCH_TOOL, runNewsSearchTool } from "../llm/tools.js";
 import { MEMORY_WRITE_TOOL, runWriteMemoryTool, MEMORY_SEARCH_TOOL, runSearchMemoryTool } from "../llm/memoryTools.js";
-import { PROPOSE_TRANSACTION_TOOL, runProposeTransactionTool } from "../llm/transactionTools.js";
+import {
+  PROPOSE_TRANSACTION_TOOL,
+  runProposeTransactionTool,
+  GET_TRANSACTION_HISTORY_TOOL,
+  runGetTransactionHistoryTool,
+} from "../llm/transactionTools.js";
 import { GET_QUOTE_TOOL, runGetQuoteTool, GET_OPTION_CHAIN_TOOL, runGetOptionChainTool } from "../llm/marketTools.js";
 import { writeAuditLog, truncateSummary as truncate } from "../audit.js";
 
@@ -27,6 +32,7 @@ const TOOLS = [
   MEMORY_WRITE_TOOL,
   MEMORY_SEARCH_TOOL,
   PROPOSE_TRANSACTION_TOOL,
+  GET_TRANSACTION_HISTORY_TOOL,
 ];
 
 // Caps the agentic loop at ~4-5 tool-call rounds per chat turn: enough for the model to
@@ -55,6 +61,8 @@ async function executeToolCall(call: ToolCall): Promise<unknown> {
         return await runSearchMemoryTool(call.arguments);
       case PROPOSE_TRANSACTION_TOOL.name:
         return await runProposeTransactionTool(call.arguments);
+      case GET_TRANSACTION_HISTORY_TOOL.name:
+        return await runGetTransactionHistoryTool(call.arguments);
       default:
         return { ok: false, error: `unknown tool "${call.name}"` };
     }

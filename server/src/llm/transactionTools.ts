@@ -2,6 +2,13 @@
 // model never writes to `transactions` directly — it can only create a Pending
 // Action, which a human must confirm or reject. Clones the NEWS_SEARCH_TOOL shape
 // in tools.ts (one exported ToolDef + one exported run...Tool function).
+//
+// Also home to get_transaction_history (#66): a read-only, on-demand lookup of
+// full Transaction history, for the assistant to answer questions like "what did
+// I pay for my NVDA puts" that fall outside the capped recent-20 snapshot
+// AiWidget.tsx auto-injects as context every turn (that snapshot exists only to
+// give propose_transaction above an existing row's id to target for EDIT/DELETE,
+// and is deliberately left untouched by this tool).
 import { db } from "../db.js";
 import { writeAuditLog } from "../audit.js";
 import { txSchema } from "../schemas/transaction.js";
@@ -105,4 +112,60 @@ export async function runProposeTransactionTool(args: Record<string, unknown>): 
   if (!parsed.success) return { ok: false, error: parsed.error.message };
   const pendingActionId = insertPendingAction(portfolio.id, "ADD", null, parsed.data);
   return { ok: true, pendingActionId, operation };
+}
+
+// Caps how many Transaction rows are folded back into the model's context per call,
+// the same way search_memory caps at MAX_RESULTS -- this tool's results get
+// JSON.stringify'd into the chat history and resent to the provider on every
+// remaining tool round (see routes/ai.ts), so an unbounded result set would scale
+// prompt size with the portfolio's full trade count. Well above the recent-20
+// snapshot AiWidget.tsx already injects, since giving real history depth is the
+// point of this tool -- just not literally unbounded.
+const MAX_RESULTS = 200;
+
+export const GET_TRANSACTION_HISTORY_TOOL: ToolDef = {
+  name: "get_transaction_history",
+  description:
+    "Look up the user's full ledger Transaction history, beyond the capped recent-20 snapshot already shared as " +
+    "context. Returns every stored field per Transaction, including option fields (option_type, strike, " +
+    "expiration) and spread_id for Credit Spread legs. Optionally filter to one ticker symbol, e.g. to answer " +
+    "'what did I pay for my NVDA puts' or 'show me all my ADBE trades'. Omit symbol for the complete history " +
+    `(most recent ${MAX_RESULTS} transactions).`,
+  parameters: {
+    type: "object",
+    properties: {
+      symbol: { type: "string", description: "Optional ticker symbol to filter to, e.g. AAPL. Omit for every symbol." },
+    },
+  },
+};
+
+export type GetTransactionHistoryResult =
+  | { ok: true; transactions: TransactionRow[] }
+  | { ok: false; error: string };
+
+/**
+ * Executes the get_transaction_history tool call. Queries `transactions` directly
+ * (mirrors GET /:id/transactions in routes/portfolio.ts for shape/ordering: full
+ * row, newest-first) rather than reusing the slim id/symbol/side/quantity/price/
+ * executed_at shape AiWidget.tsx auto-injects -- this tool's whole point is giving
+ * the model visibility into fields that snapshot omits (option_type/strike/
+ * expiration/spread_id). Single-portfolio assumption mirrors
+ * runProposeTransactionTool above. Capped at MAX_RESULTS, newest first, same
+ * rationale as runSearchMemoryTool's cap.
+ */
+export async function runGetTransactionHistoryTool(args: Record<string, unknown>): Promise<GetTransactionHistoryResult> {
+  const portfolio = db.prepare("SELECT id FROM portfolios LIMIT 1").get() as { id: number } | undefined;
+  if (!portfolio) return { ok: false, error: "no portfolio exists to look up transactions for" };
+
+  const symbol = typeof args.symbol === "string" && args.symbol.trim() ? args.symbol.trim().toUpperCase() : undefined;
+
+  const transactions = symbol
+    ? (db
+        .prepare("SELECT * FROM transactions WHERE portfolio_id = ? AND symbol = ? ORDER BY executed_at DESC, id DESC LIMIT ?")
+        .all(portfolio.id, symbol, MAX_RESULTS) as TransactionRow[])
+    : (db
+        .prepare("SELECT * FROM transactions WHERE portfolio_id = ? ORDER BY executed_at DESC, id DESC LIMIT ?")
+        .all(portfolio.id, MAX_RESULTS) as TransactionRow[]);
+
+  return { ok: true, transactions };
 }
