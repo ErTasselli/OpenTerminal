@@ -296,6 +296,154 @@ describe("POST /api/ai/chat", () => {
       expect(jsonArg.toolCalls).toHaveLength(5);
     });
 
+    it("tells the model on the forced final round that no more tools are available and it must answer now (#70)", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const toolUseResponse = {
+        stop_reason: "tool_use",
+        content: [{ type: "tool_use", id: "call_1", name: "search_news", input: {} }],
+      };
+      const fetchMock = mockAgenticFetch([toolUseResponse]); // always returns the same tool_use body
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = { body: { messages: [{ role: "user", content: "keep digging" }] } } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      const providerCalls = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes("api.anthropic.com"));
+      expect(providerCalls).toHaveLength(6); // 1 initial call + 5 capped rounds
+
+      // Every call before the forced final round uses the plain system prompt; only the
+      // last call (the one with `tools` omitted) gets the added "no more tools" instruction.
+      for (const call of providerCalls.slice(0, -1)) {
+        const body = JSON.parse(call[1].body);
+        expect(body.system).not.toMatch(/no further tool calls/i);
+      }
+      const lastBody = JSON.parse(providerCalls.at(-1)[1].body);
+      expect(lastBody.tools).toBeUndefined();
+      expect(lastBody.system).toMatch(/no further tool calls/i);
+      expect(lastBody.system).toMatch(/final answer/i);
+    });
+
+    it("replaces a leaked 'Requested tool call(s):' bookkeeping string with an honest fallback, never passing it to the client (#70)", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const toolUseResponse = {
+        stop_reason: "tool_use",
+        content: [{ type: "tool_use", id: "call_1", name: "search_news", input: { symbol: "AAPL" } }],
+      };
+      // The final forced round still echoes the internal bookkeeping shape as if it were
+      // a real answer -- the exact failure mode #70 is about.
+      const leakedBookkeepingResponse = {
+        stop_reason: "end_turn",
+        content: [
+          {
+            type: "text",
+            text: 'Requested tool call(s): [{"name":"get_quote","arguments":{"symbol":"AAPL"}}]',
+          },
+        ],
+      };
+      const fetchMock = mockAgenticFetch([
+        toolUseResponse,
+        toolUseResponse,
+        toolUseResponse,
+        toolUseResponse,
+        toolUseResponse,
+        leakedBookkeepingResponse,
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      const { db } = await import("../db.js");
+      const handler = getHandler("/chat");
+      const req = { body: { messages: [{ role: "user", content: "keep digging" }] } } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      // Confirms this reached the forced tools-omitted final round, matching the real
+      // round-cap-plus-leaked-bookkeeping scenario from #70, not just any early exit.
+      const providerCalls = fetchMock.mock.calls.filter((c: any) => String(c[0]).includes("api.anthropic.com"));
+      expect(providerCalls).toHaveLength(6);
+      const lastBody = JSON.parse(providerCalls.at(-1)[1].body);
+      expect(lastBody.tools).toBeUndefined();
+
+      // The client never sees the raw bookkeeping string.
+      const jsonArg = (res.json as any).mock.calls[0][0];
+      expect(jsonArg.text).not.toMatch(/Requested tool call\(s\)/i);
+      expect(jsonArg.text).toBeTruthy();
+
+      // The Audit Log still records what the model actually said, honestly.
+      const row = db.prepare("SELECT detail FROM audit_log WHERE event_type = 'chat' ORDER BY id DESC LIMIT 1").get() as {
+        detail: string;
+      };
+      const detail = JSON.parse(row.detail);
+      expect(detail.response).toMatch(/Requested tool call\(s\)/i);
+      expect(detail.userFacingFallback).toBe(jsonArg.text);
+    });
+
+    it("does not misdetect prose that merely mentions the bookkeeping phrase as a leak (#70)", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      // Legitimate prose that names the internal phrase without reproducing the actual
+      // call-array JSON shape right after it -- must pass through untouched.
+      const genuineAnswer = {
+        stop_reason: "end_turn",
+        content: [
+          {
+            type: "text",
+            text: 'Internally, the assistant logs a line like "Requested tool call(s):" between rounds, but that is just bookkeeping.',
+          },
+        ],
+      };
+      vi.stubGlobal("fetch", mockAgenticFetch([genuineAnswer]));
+      const handler = getHandler("/chat");
+      const req = {
+        body: { messages: [{ role: "user", content: "How does your tool-call bookkeeping work?" }] },
+      } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.json).toHaveBeenCalledWith({ text: genuineAnswer.content[0].text });
+    });
+
+    it("falls back to an honest message instead of returning silent empty text as the final answer (#70)", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = mockAgenticFetch([
+        { stop_reason: "end_turn", content: [] }, // no text, no tool_use: a silent non-answer
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = { body: { messages: [{ role: "user", content: "hi" }] } } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      const jsonArg = (res.json as any).mock.calls[0][0];
+      expect(jsonArg.text).toBeTruthy();
+      expect(jsonArg.text).not.toBe("");
+      // No tool was ever attempted this turn, so the fallback must not blame a "lookup" or
+      // rate limit -- that would be a misleading explanation for a plain empty answer (#70).
+      expect(jsonArg.text).not.toMatch(/lookup|rate limit/i);
+    });
+
+    it("blames the lookup, not a generic non-answer, when empty text follows an attempted tool call (#70)", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = mockAgenticFetch([
+        {
+          stop_reason: "tool_use",
+          content: [{ type: "tool_use", id: "call_1", name: "search_news", input: {} }],
+        },
+        { stop_reason: "end_turn", content: [] }, // follow-up comes back empty after a real tool call
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      const handler = getHandler("/chat");
+      const req = { body: { messages: [{ role: "user", content: "keep digging" }] } } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      const jsonArg = (res.json as any).mock.calls[0][0];
+      expect(jsonArg.text).toMatch(/lookup/i);
+    });
+
     it("omits toolCalls from the response when the model never calls a tool", async () => {
       process.env.ANTHROPIC_API_KEY = "test-key";
       vi.stubGlobal(
