@@ -39,6 +39,13 @@ services:
       - API_URL=http://api:4000
       - API_KEY=${API_KEY:-}
       - API_KEY_FILE=/app/data/.api-key
+      # Next's standalone server.js binds via process.env.HOSTNAME, and Docker auto-injects
+      # HOSTNAME=<container-id> into every container's runtime env (not shown by `docker
+      # inspect`, but present). That makes it DNS-resolve its own container ID before
+      # binding -- if the bridge network's embedded DNS isn't up yet (e.g. right after a
+      # host reboot), that lookup fails with EAI_AGAIN and the server never starts.
+      # Overriding it to a literal IP needs no DNS lookup, same fix as api's API_HOST above.
+      - HOSTNAME=0.0.0.0
     volumes:
       - terminal-data:/app/data:ro
     depends_on:
