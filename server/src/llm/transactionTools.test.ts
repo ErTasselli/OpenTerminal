@@ -9,13 +9,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 let tmpDir: string;
 let db: (typeof import("../db.js"))["db"];
 let runProposeTransactionTool: (typeof import("./transactionTools.js"))["runProposeTransactionTool"];
+let runGetTransactionHistoryTool: (typeof import("./transactionTools.js"))["runGetTransactionHistoryTool"];
 let portfolioId: number;
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "bloomber-transaction-tools-test-"));
   process.env.DATA_DIR = tmpDir;
   ({ db } = await import("../db.js"));
-  ({ runProposeTransactionTool } = await import("./transactionTools.js"));
+  ({ runProposeTransactionTool, runGetTransactionHistoryTool } = await import("./transactionTools.js"));
   const portfolio = db.prepare("SELECT id FROM portfolios LIMIT 1").get() as { id: number };
   portfolioId = portfolio.id;
 });
@@ -144,5 +145,65 @@ describe("runProposeTransactionTool", () => {
   it("EDIT/DELETE: returns ok:false when transaction_id is missing", async () => {
     const result = await runProposeTransactionTool({ operation: "DELETE" });
     expect(result).toMatchObject({ ok: false });
+  });
+});
+
+describe("runGetTransactionHistoryTool", () => {
+  it("returns every stored field, including option_type/strike/expiration/spread_id, for an option transaction", async () => {
+    const info = db
+      .prepare(
+        "INSERT INTO transactions (portfolio_id, symbol, side, quantity, price, executed_at, instrument_type, option_type, strike, expiration, spread_id) " +
+          "VALUES (?, 'NVDA', 'BUY', 2, 12.5, '2026-02-01T00:00:00Z', 'OPTION', 'PUT', 120, '2026-06-19', 'spread-abc')"
+      )
+      .run(portfolioId);
+    const txId = Number(info.lastInsertRowid);
+
+    const result = await runGetTransactionHistoryTool({});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const row = result.transactions.find((t) => t.id === txId);
+    expect(row).toMatchObject({
+      symbol: "NVDA",
+      side: "BUY",
+      quantity: 2,
+      price: 12.5,
+      instrument_type: "OPTION",
+      option_type: "PUT",
+      strike: 120,
+      expiration: "2026-06-19",
+      spread_id: "spread-abc",
+    });
+  });
+
+  it("filters to the given symbol, case-insensitively", async () => {
+    db.prepare(
+      "INSERT INTO transactions (portfolio_id, symbol, side, quantity, price, executed_at) VALUES (?, 'ADBE', 'BUY', 3, 400, '2026-02-02T00:00:00Z')"
+    ).run(portfolioId);
+    db.prepare(
+      "INSERT INTO transactions (portfolio_id, symbol, side, quantity, price, executed_at) VALUES (?, 'ADBE', 'SELL', 1, 410, '2026-02-03T00:00:00Z')"
+    ).run(portfolioId);
+
+    const result = await runGetTransactionHistoryTool({ symbol: "adbe" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.transactions.length).toBeGreaterThanOrEqual(2);
+    expect(result.transactions.every((t) => t.symbol === "ADBE")).toBe(true);
+  });
+
+  it("returns an empty array (ok:true) when the symbol has no matching transactions", async () => {
+    const result = await runGetTransactionHistoryTool({ symbol: "ZZZZZZ" });
+
+    expect(result).toEqual({ ok: true, transactions: [] });
+  });
+
+  it("omitting symbol returns the full transaction history for the portfolio", async () => {
+    const result = await runGetTransactionHistoryTool({});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const totalRows = db.prepare("SELECT COUNT(*) as n FROM transactions WHERE portfolio_id = ?").get(portfolioId) as { n: number };
+    expect(result.transactions.length).toBe(totalRows.n);
   });
 });
