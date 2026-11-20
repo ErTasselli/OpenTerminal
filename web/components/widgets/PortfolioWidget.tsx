@@ -6,6 +6,7 @@ import { apiGet, apiPost, apiDelete, fmt, pctClass, type Quote } from "../../lib
 import { symbolsParam } from "../../lib/symbol";
 import { validateCreditSpreadForm, type CreditSpreadFormInput } from "../../lib/creditSpread";
 import { computeCreditSpreadPnl } from "../../lib/creditSpreadPnl";
+import { useTerminal } from "../../store/terminal";
 
 type Portfolio = { id: number; name: string };
 // A single-leg holding (issue #52 keeps these keyed by symbol, or by
@@ -80,6 +81,7 @@ const emptySpreadForm: CreditSpreadFormInput = {
 
 export default function PortfolioWidget() {
   const qc = useQueryClient();
+  const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
   const [portfolioId, setPortfolioId] = useState<number | null>(null);
   const [showTx, setShowTx] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -379,7 +381,10 @@ export default function PortfolioWidget() {
                 const sideLabel = p.optionType === "PUT" ? "Put" : "Call";
                 const typeLabel = `$${p.shortStrike}/${p.longStrike} ${sideLabel} Credit Spread exp ${p.expiration}`;
                 return (
-                  <tr key={`${p.symbol}-CREDIT_SPREAD-${p.optionType ?? ""}-${p.shortStrike}-${p.longStrike}-${p.expiration ?? ""}`}>
+                  <tr
+                    key={`${p.symbol}-CREDIT_SPREAD-${p.optionType ?? ""}-${p.shortStrike}-${p.longStrike}-${p.expiration ?? ""}`}
+                    onClick={() => setActiveSymbol(p.symbol)}
+                  >
                     <td className="font-bold">{p.symbol}</td>
                     <td className="dim">{typeLabel}</td>
                     <td>{fmt(p.quantity, 4)}</td>
@@ -399,7 +404,10 @@ export default function PortfolioWidget() {
                   ? `${p.optionType} $${p.strike} ${p.expiration}`
                   : "EQUITY";
               return (
-                <tr key={`${p.symbol}-${p.instrumentType}-${p.optionType ?? ""}-${p.strike ?? ""}-${p.expiration ?? ""}`}>
+                <tr
+                  key={`${p.symbol}-${p.instrumentType}-${p.optionType ?? ""}-${p.strike ?? ""}-${p.expiration ?? ""}`}
+                  onClick={() => setActiveSymbol(p.symbol)}
+                >
                   <td className="font-bold">{p.symbol}</td>
                   <td className="dim">{typeLabel}</td>
                   <td>{fmt(p.quantity, 4)}</td>
