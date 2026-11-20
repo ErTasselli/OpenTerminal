@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { apiGet, apiPost, type Quote } from "../../lib/api";
 import { toApiMessages, type ImageAttachment } from "../../lib/chatMessageParts";
+import { buildPositionsContext, type PositionSnapshot } from "../../lib/positionsContext";
 import { useTerminal } from "../../store/terminal";
 
 type ToolCallTrace = { name: string; arguments: Record<string, unknown> };
@@ -45,9 +46,6 @@ function readImageFile(file: File): Promise<ImageAttachment> {
 }
 
 type Portfolio = { id: number; name: string };
-// A lightweight slice of GET /api/portfolios/:id/positions (see PortfolioWidget.tsx for the
-// full shape) — just enough for the assistant to ground answers, not the full options fields.
-type PositionSnapshot = { symbol: string; instrumentType: string; quantity: number; avgCost: number };
 // A lightweight slice of GET /api/portfolios/:id/transactions, capped to the most recent
 // MAX_RECENT_TRANSACTIONS rows — gives the model transaction ids so it can target an
 // existing row via the propose_transaction Tool Call's EDIT/DELETE operations (ADR-0002:
@@ -110,15 +108,9 @@ export default function AiWidget() {
         }),
       ]);
       if (quoteResult.status === "fulfilled") context.quote = quoteResult.value[0];
-      if (positionsResult.status === "fulfilled" && positionsResult.value.length > 0) {
-        context.positions = positionsResult.value.map(
-          (p): PositionSnapshot => ({
-            symbol: p.symbol,
-            instrumentType: p.instrumentType,
-            quantity: p.quantity,
-            avgCost: p.avgCost,
-          })
-        );
+      if (positionsResult.status === "fulfilled") {
+        const positions = buildPositionsContext(positionsResult.value);
+        if (positions) context.positions = positions;
       }
       if (transactionsResult.status === "fulfilled" && transactionsResult.value.length > 0) {
         context.recentTransactions = transactionsResult.value
