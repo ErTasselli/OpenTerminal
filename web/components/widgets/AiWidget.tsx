@@ -3,22 +3,15 @@
 import { useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { apiGet, apiPost, type Quote } from "../../lib/api";
+import { appendMessage, type ChatTranscriptMessage, type ToolCallTrace } from "../../lib/chatMessages";
 import { toApiMessages, type ImageAttachment } from "../../lib/chatMessageParts";
 import { buildPositionsContext, type PositionSnapshot } from "../../lib/positionsContext";
 import { useTerminal } from "../../store/terminal";
 
-type ToolCallTrace = { name: string; arguments: Record<string, unknown> };
-
-type Msg = {
-  role: "user" | "assistant";
-  content: string;
-  // Only ever set on a user message. Shown as a thumbnail in the transcript for every
-  // turn it was attached to, but toApiMessages only ever sends it to the server on the
-  // turn it was attached to -- an older turn's image is dropped before the request goes
-  // out, so a long conversation never resends every image it's ever seen.
-  image?: ImageAttachment;
-  toolCalls?: ToolCallTrace[];
-};
+// Alias kept for readability at call sites below -- see chatMessages.ts for the shape
+// (image is only ever set on a user message; see toApiMessages for why an older turn's
+// image is dropped before the request goes out).
+type Msg = ChatTranscriptMessage;
 
 // Same mime-type allowlist and size cap as the server's SUPPORTED_IMAGE_MIME_TYPES /
 // MAX_IMAGE_BYTES (server/src/llm/types.ts) -- kept here too so a bad attachment is
@@ -127,16 +120,22 @@ export default function AiWidget() {
           );
       }
 
+      // `messages` here is a snapshot of the transcript at mutate-call time -- used only
+      // to shape this request's payload (the server needs the full conversation so far,
+      // including the just-added user turn). It is NOT treated as "the next canonical
+      // transcript": onSuccess below appends the reply via a functional setMessages
+      // update against whatever `messages` actually is at success time, so there's a
+      // single source of truth for the transcript instead of two independently-maintained
+      // copies that can diverge (see appendMessage's doc comment and #69).
       const userMsg: Msg = { role: "user", content: text, image: image ?? undefined };
-      const next = [...messages, userMsg];
       const res = await apiPost<{ text: string; toolCalls?: ToolCallTrace[] }>("/api/ai/chat", {
-        messages: toApiMessages(next),
+        messages: toApiMessages([...messages, userMsg]),
         context,
       });
-      return { next, reply: res.text, toolCalls: res.toolCalls };
+      return { reply: res.text, toolCalls: res.toolCalls };
     },
-    onSuccess: ({ next, reply, toolCalls }) => {
-      setMessages([...next, { role: "assistant", content: reply, toolCalls }]);
+    onSuccess: ({ reply, toolCalls }) => {
+      setMessages((m) => appendMessage(m, { role: "assistant", content: reply, toolCalls }));
       setTimeout(() => scrollRef.current?.scrollTo({ top: 1e9 }), 50);
     },
   });
@@ -145,7 +144,7 @@ export default function AiWidget() {
     const text = input.trim();
     if ((!text && !attachedImage) || chat.isPending) return;
     const image = attachedImage;
-    setMessages((m) => [...m, { role: "user", content: text, image: image ?? undefined }]);
+    setMessages((m) => appendMessage(m, { role: "user", content: text, image: image ?? undefined }));
     setInput("");
     setAttachedImage(null);
     chat.mutate({ text, image });
