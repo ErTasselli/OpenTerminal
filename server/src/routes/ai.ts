@@ -42,6 +42,48 @@ const TOOLS = [
 // from whatever it already has rather than silently truncating a tool request mid-loop.
 const MAX_TOOL_ROUNDS = 5;
 
+// Appended to SYSTEM for that forced final round only (#70). By this point the model has
+// just seen `Requested tool call(s): [...]` bookkeeping (see callSummary below) echoed back
+// across its own recent context several times; without an explicit nudge it sometimes mimics
+// that exact shape back as its "answer" instead of writing prose, since `tools` being omitted
+// isn't itself a signal the model reliably picks up on.
+const FINAL_ROUND_INSTRUCTION =
+  "\n\nNo further tool calls are available this turn -- the tool-round limit has been reached. " +
+  "Give your best final answer now, in plain natural language, using only the information you " +
+  'already gathered in the rounds above. Do not call a tool and do not output tool-call syntax or ' +
+  'JSON (e.g. a "Requested tool call(s): [...]" line) -- that is internal bookkeeping, not an answer.';
+
+// Matches the literal callSummary shape built below -- "Requested tool call(s): [{...}]" --
+// not just the bare phrase, so a legitimate answer that happens to mention or quote
+// "Requested tool call(s):" in prose (without reproducing the actual call-array JSON right
+// after it) isn't misdetected as a leak. Also matches a bare JSON array of the same call
+// shape, in case the model drops the prefix but still echoes the raw call data verbatim.
+// Defensive net for #70: if the model's final answer still looks like this instead of
+// prose, it must never reach the client as-is.
+const TOOL_CALL_BOOKKEEPING_PATTERN = /Requested tool call\(s\)\s*:\s*\[\s*\{\s*"name"\s*:/i;
+const RAW_TOOL_CALL_JSON_PATTERN = /^\s*\[\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:/;
+
+function looksLikeLeakedToolCallBookkeeping(text: string): boolean {
+  return TOOL_CALL_BOOKKEEPING_PATTERN.test(text) || RAW_TOOL_CALL_JSON_PATTERN.test(text);
+}
+
+/** True for anything that would be a bad final answer to show the user as-is: empty text
+ * (silent non-answer) or the leaked internal bookkeeping shape above (#70). */
+function isUnusableFinalAnswer(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length === 0 || looksLikeLeakedToolCallBookkeeping(trimmed);
+}
+
+const TOOL_LOOKUP_FALLBACK_MESSAGE =
+  "I wasn't able to finish that lookup -- one or more data lookups didn't complete, which can " +
+  "happen during a market-data provider rate limit or outage. Please try again in a moment.";
+
+// Used instead of TOOL_LOOKUP_FALLBACK_MESSAGE when the turn never attempted a tool call at
+// all (toolTrace is empty) -- blaming a "lookup" or "rate limit" would be misleading when no
+// lookup was ever in play, e.g. a plain greeting that happened to get back empty text (#70).
+const GENERIC_UNUSABLE_ANSWER_FALLBACK_MESSAGE =
+  "I didn't get a usable answer for that -- please try asking again.";
+
 // Always resolves (never rejects), even if a tool implementation throws unexpectedly:
 // these run inside a Promise.all per round (see below), so one tool's failure must
 // surface back to the model as an error result rather than aborting every other tool
@@ -175,7 +217,10 @@ aiRouter.post("/chat", async (req, res) => {
 
       const isLastRound = round === MAX_TOOL_ROUNDS - 1;
       response = await provider.chat({
-        system: SYSTEM,
+        // On the forced final round, append an explicit instruction that tools are no
+        // longer available and a plain-text answer is required now (#70) -- see
+        // FINAL_ROUND_INSTRUCTION above for why this is needed beyond just omitting `tools`.
+        system: isLastRound ? `${SYSTEM}${FINAL_ROUND_INSTRUCTION}` : SYSTEM,
         messages: currentMessages,
         model: modelOverride,
         // `context` is only sent on the initial call — the model already has it from
@@ -186,19 +231,39 @@ aiRouter.post("/chat", async (req, res) => {
       accumulateUsage(response.usage);
     }
 
+    // Defensive net (#70): never hand the client the model's raw text when it's unusable --
+    // either the leaked `Requested tool call(s): [...]` bookkeeping shape (see
+    // FINAL_ROUND_INSTRUCTION above, which is meant to prevent this) or outright empty text,
+    // which the user would otherwise just experience as silence. The Audit Log still records
+    // what the model actually said, honestly, alongside the fallback shown to the user.
+    const rawText = response.text;
+    const unusableFinalAnswer = isUnusableFinalAnswer(rawText);
+    // Only blame a "lookup"/rate-limit when a tool was actually attempted this turn --
+    // otherwise (e.g. a plain greeting that came back empty) that explanation would be
+    // misleading, since no lookup was ever in play (#70).
+    const userFacingText = unusableFinalAnswer
+      ? toolTrace.length > 0
+        ? TOOL_LOOKUP_FALLBACK_MESSAGE
+        : GENERIC_UNUSABLE_ANSWER_FALLBACK_MESSAGE
+      : rawText;
+
     writeAuditLog({
       eventType: "chat",
-      summary: `${truncate(textOf(messages.at(-1)?.content ?? ""))} -> ${truncate(response.text)}`,
+      summary: `${truncate(textOf(messages.at(-1)?.content ?? ""))} -> ${truncate(rawText)}`,
       // Raw image bytes never land in the Audit Log (#29's contract, upheld a different
       // way as of #30): toAuditMessages persists any live rehydrated `image` part here
       // right back to the same id it came from (content-addressed, so this is a no-op)
       // and swaps it for an `image-ref` before this detail blob is serialized.
-      detail: { messages: toAuditMessages(currentMessages), response: response.text },
+      detail: {
+        messages: toAuditMessages(currentMessages),
+        response: rawText,
+        ...(unusableFinalAnswer ? { userFacingFallback: userFacingText } : {}),
+      },
       model: provider.name,
       ...(sawUsage ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens } : {}),
     });
 
-    res.json({ text: response.text, toolCalls: toolTrace.length > 0 ? toolTrace : undefined });
+    res.json({ text: userFacingText, toolCalls: toolTrace.length > 0 ? toolTrace : undefined });
   } catch (err) {
     // A present-but-invalid/revoked key surfaces as an upstream auth error here
     // (missing keys are already caught by hasCredentials() above) — report it
