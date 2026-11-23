@@ -13,9 +13,36 @@ function stooqSymbol(symbol: string): string {
   return s + ".us";
 }
 
+// stooq.com has been observed fully network-unreachable at the TCP layer
+// (connection attempts to both of its IPs time out) for extended stretches.
+// Unlike Yahoo's 429 cooldown, the trigger here is the fetch itself failing
+// to connect at all — not a successful response with a bad status — so once
+// that happens repeatedly we fail fast instead of paying the full
+// FETCH_TIMEOUT_MS tax on every request while it's down. Shared across every
+// call site below since a network-level failure to reach stooq.com affects
+// the whole host, not one endpoint.
+let cooldownUntil = 0;
+let consecutiveFailures = 0;
+
+async function sfetch(url: string): Promise<Response> {
+  if (Date.now() < cooldownUntil) {
+    throw new Error("stooq: skipping request (cooling down after repeated failures)");
+  }
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    consecutiveFailures = 0;
+    cooldownUntil = 0;
+    return res;
+  } catch (err) {
+    consecutiveFailures++;
+    cooldownUntil = Date.now() + Math.min(30_000 * consecutiveFailures, 5 * 60_000);
+    throw err;
+  }
+}
+
 export async function history(symbol: string): Promise<Candle[]> {
   const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol(symbol))}&i=d`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const res = await sfetch(url);
   if (!res.ok) throw new Error(`stooq ${res.status}`);
   const text = await res.text();
   const lines = text.trim().split("\n");
@@ -33,7 +60,7 @@ export async function history(symbol: string): Promise<Candle[]> {
 
 export async function quote(symbol: string): Promise<Quote> {
   const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol(symbol))}&f=sd2t2ohlcv&h&e=csv`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const res = await sfetch(url);
   if (!res.ok) throw new Error(`stooq ${res.status}`);
   const lines = (await res.text()).trim().split("\n");
   if (lines.length < 2) throw new Error("stooq: empty quote");
